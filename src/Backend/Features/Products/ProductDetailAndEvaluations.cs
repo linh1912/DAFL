@@ -48,7 +48,8 @@ public class GetProductDetailQueryHandler : IRequestHandler<GetProductDetailQuer
             .Include(p => p.Evaluations)
             .FirstOrDefaultAsync(p => p.Id == request.ProductId, cancellationToken);
 
-        if (product == null)
+        // CN-05 E1: sản phẩm không tồn tại HOẶC đã ngừng bán → coi như không tìm thấy (404 phía endpoint)
+        if (product == null || !product.IsActive)
         {
             return ApiResponse<ProductDetailDto>.Fail("Không tìm thấy sản phẩm.");
         }

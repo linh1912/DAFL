@@ -917,12 +917,12 @@ body {
   background: var(--bg-modal);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  max-width: 580px;
+  max-width: 660px;
   width: 100%;
   max-height: 90vh;
   overflow-y: auto;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
-  padding: 28px;
+  padding: 32px;
   position: relative;
   color: var(--text-main);
 }
@@ -3278,7 +3278,7 @@ section[data-testid="category-filter-section"] {
 
 /* Auth page: yellow brand panel (logo + name only) beside the form */
 .auth-page-wrapper {
-  max-width: 980px;
+  max-width: 1140px;
 }
 
 .auth-page-card {
@@ -3321,7 +3321,7 @@ section[data-testid="category-filter-section"] {
 }
 
 .auth-main-panel {
-  padding: 32px;
+  padding: 40px;
   min-width: 0;
 }
 
@@ -3506,4 +3506,402 @@ section[data-testid="category-filter-section"] {
     border-radius: 8px;
     padding: 11px 14px;
   }
+}
+
+/* ============================================================
+   CN v5 — Danh mục / Giỏ hàng / Checkout / Đơn hàng / Hồ sơ
+   ============================================================ */
+
+/* --- Danh mục (CN-04) --- */
+.price-range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.price-range-inputs .form-input {
+  flex: 1;
+  min-width: 0;
+}
+.price-range-sep {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.filter-error {
+  color: #e40046;
+  font-size: 0.8rem;
+  margin-top: 8px;
+  line-height: 1.45;
+}
+.catalog-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.sort-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.sort-select {
+  width: auto;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+}
+.catalog-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 26px 0 8px;
+}
+.pagination-btn,
+.pagination-page-btn {
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  border-radius: 8px;
+}
+.pagination-page-btn {
+  min-width: 40px;
+}
+.pagination-current {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-main);
+  padding: 0 6px;
+}
+.shop-empty-state .btn {
+  margin-top: 14px;
+}
+
+/* --- Chi tiết sản phẩm (CN-05) --- */
+.variant-option {
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 18px;
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-main);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.variant-option:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.variant-option.active {
+  border-color: var(--primary);
+  background: rgba(228, 0, 70, 0.06);
+  color: var(--primary);
+}
+.variant-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- Giỏ hàng (CN-06) --- */
+.cart-qty-input {
+  width: 44px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.88rem;
+  padding: 5px 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-main);
+}
+.cart-qty-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+.cart-qty-input:disabled {
+  opacity: 0.55;
+}
+.cart-item-remove-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+  background: none;
+  border: none;
+  color: #e40046;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.cart-item-remove-btn:hover {
+  background: rgba(228, 0, 70, 0.08);
+}
+.cart-item-unavailable {
+  opacity: 0.75;
+}
+.cart-item-unavailable-note {
+  color: #b91c1c;
+  font-size: 0.78rem;
+  margin-top: 4px;
+  line-height: 1.45;
+}
+.cart-item-price-changed {
+  color: #b45309;
+  font-size: 0.78rem;
+  margin-top: 4px;
+  line-height: 1.45;
+}
+.cart-unavailable-banner {
+  background: #fff8e1;
+  border: 1px solid #f59e0b;
+  color: var(--text-main);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.83rem;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.remove-confirm-dialog {
+  max-width: 440px;
+}
+
+/* --- Checkout (CN-07) --- */
+.checkout-notice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+.checkout-notice-warning {
+  background: #fff8e1;
+  border: 1px solid #f59e0b;
+  color: var(--text-main);
+}
+.checkout-notice-error {
+  background: rgba(228, 0, 70, 0.07);
+  border: 1px solid rgba(228, 0, 70, 0.4);
+  color: #b91c1c;
+}
+.note-counter {
+  float: right;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.payment-method-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+.payment-method-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--bg-card);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.payment-method-option:hover {
+  border-color: var(--primary);
+}
+.payment-method-option.selected {
+  border-color: var(--primary);
+  background: rgba(228, 0, 70, 0.05);
+}
+.payment-method-option.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.payment-method-option input {
+  margin-top: 3px;
+}
+.payment-method-option strong {
+  display: block;
+  font-size: 0.88rem;
+  color: var(--text-main);
+}
+.payment-method-option small {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+/* --- Đơn hàng (CN-08) --- */
+.orders-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.orders-filter-select {
+  width: auto;
+  min-width: 200px;
+  padding: 9px 12px;
+  font-size: 0.88rem;
+}
+.cancel-success-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(22, 163, 74, 0.1);
+  border: 1px solid #16a34a;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 16px;
+}
+.empty-state-card {
+  text-align: center;
+  padding: 60px 0;
+  background: var(--bg-card);
+  border-radius: 16px;
+  border: 1px solid var(--border-subtle);
+}
+.order-detail-card {
+  margin-top: 22px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 20px;
+}
+.order-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.order-detail-totals {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+  margin-top: 6px;
+  display: grid;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+.order-detail-totals > div {
+  display: flex;
+  justify-content: space-between;
+}
+.order-detail-grand-total {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-main);
+}
+.order-detail-grand-total span:last-child {
+  color: #e40046;
+}
+.order-detail-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.btn-danger-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border-radius: 8px;
+  border: 1px solid rgba(228, 0, 70, 0.45);
+  background: transparent;
+  color: #e40046;
+  font-weight: 700;
+  font-size: 0.87rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.btn-danger-outline:hover {
+  background: rgba(228, 0, 70, 0.08);
+}
+.order-support-note {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+.cancel-dialog {
+  max-width: 480px;
+}
+
+/* --- Hồ sơ & sổ địa chỉ (CN-03) --- */
+.profile-section-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  margin: 0 0 14px;
+  color: var(--text-main);
+}
+.address-book-item {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+}
+.address-default-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #ffd900;
+  color: #111111;
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.address-book-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.address-action-btn {
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.address-delete-btn {
+  color: #e40046;
+}
+.empty-state-inline {
+  border: 1px dashed var(--border-subtle);
+  border-radius: 12px;
+  padding: 18px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+/* Focus rõ ràng cho các control mới */
+.sort-select:focus,
+.orders-filter-select:focus,
+.cart-qty-input:focus,
+.payment-method-option:focus-within {
+  border-color: var(--border-focus);
 }

@@ -1,4 +1,6 @@
+using System.Text.RegularExpressions;
 using DAFL.Backend.Common;
+using DAFL.Backend.Infrastructure.Auth;
 using DAFL.Backend.Infrastructure.Data;
 using DAFL.Backend.Infrastructure.Hubs;
 using DAFL.Backend.Infrastructure.Messaging;
@@ -9,19 +11,19 @@ using Microsoft.EntityFrameworkCore;
 namespace DAFL.Backend.Features.Auth;
 
 // DTOs
-public record UserDto(Guid Id, string Email, string FullName, string? PhoneNumber, string? Address, string Role, string SessionId);
+// HasPassword: tài khoản đã có mật khẩu hay chưa (false = tài khoản social thuần túy → FE hiện form "Đặt mật khẩu").
+// AuthProvider: nhà cung cấp social đã liên kết đầu tiên ("google"/"facebook"), null nếu tài khoản chỉ dùng mật khẩu.
+public record UserDto(Guid Id, string Email, string FullName, string? PhoneNumber, string? Address, string Role, bool HasPassword = true, string? AuthProvider = null);
+
+/// <summary>Kết quả xác thực thành công (đăng nhập / đăng ký / social): JWT hạn 1 giờ + thông tin user (CN-02).</summary>
+public record AuthResultDto(string Token, UserDto User, DateTime ExpiresAt);
+
 public record NotificationDto(Guid Id, string Title, string Message, string Type, bool IsRead, DateTime CreatedAt);
 
-/// <summary>Kết quả đăng ký: tài khoản mới tạo ở trạng thái chờ xác thực email, CHƯA có session.</summary>
-public record RegisterResponseDto(string Email, bool RequiresVerification, string? DebugCode);
-
-/// <summary>Kết quả các request gửi OTP (verify/resend/forgot/otp-login). DebugCode chỉ có ở môi trường test/dev.</summary>
-public record OtpRequestResponseDto(string? DebugCode);
-
 /// <summary>
-/// Policy mật khẩu dùng chung cho Đăng ký và Đặt lại mật khẩu (4 quy tắc):
-/// ≥ 8 ký tự, ≥ 1 chữ hoa, ≥ 1 chữ số, ≥ 1 ký tự đặc biệt.
-/// Trả về câu lỗi đầu tiên vi phạm, hoặc null nếu hợp lệ.
+/// Policy mật khẩu dùng chung cho Đăng ký / Đổi mật khẩu / Đặt lại mật khẩu / Đặt mật khẩu social.
+/// GIỮ NGUYÊN policy nghiêm ngặt của bản v3 (Daniel chốt lại 2026-11-01, hủy override O2 của CN):
+/// ≥ 8 ký tự, ≥ 1 chữ hoa, ≥ 1 chữ số, ≥ 1 ký tự đặc biệt. Trả về câu lỗi đầu tiên vi phạm, hoặc null nếu hợp lệ.
 /// </summary>
 public static class PasswordPolicy
 {
@@ -51,81 +53,143 @@ public static class PasswordPolicy
     }
 }
 
-/// <summary>Tạo session đăng nhập 7 ngày cho user (dùng chung: login, verify-email, otp-login).</summary>
-public static class AuthSessionFactory
+/// <summary>Validate dùng chung cho họ tên / email / SĐT theo CN-01 (câu chữ đúng đặc tả).</summary>
+public static class IdentityValidation
 {
-    public static async Task<UserDto> CreateSessionAsync(AppDbContext context, User user, CancellationToken cancellationToken)
+    public static readonly Regex VietnamPhoneRegex = new(@"^0\d{9}$", RegexOptions.Compiled);
+    public static readonly Regex EmailRegex = new(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.Compiled);
+
+    public static string? ValidateFullName(string? fullName)
+        => string.IsNullOrWhiteSpace(fullName) || fullName.Trim().Length < 2 || fullName.Trim().Length > 50
+            ? "Họ tên không hợp lệ"
+            : null;
+
+    public static string? ValidateEmailFormat(string? email)
+        => string.IsNullOrWhiteSpace(email) || !EmailRegex.IsMatch(email.Trim())
+            ? "Email không hợp lệ"
+            : null;
+
+    public static string? ValidatePhoneFormat(string? phone)
+        => string.IsNullOrWhiteSpace(phone) || !VietnamPhoneRegex.IsMatch(phone.Trim())
+            ? "Số điện thoại không hợp lệ"
+            : null;
+}
+
+/// <summary>Cấp JWT + dựng UserDto (dùng chung: login, register, social — CN-02).</summary>
+public static class AuthTokenFactory
+{
+    public static async Task<AuthResultDto> CreateAuthResultAsync(
+        AppDbContext context, IJwtService jwtService, User user, CancellationToken cancellationToken)
     {
-        var sessionId = Guid.NewGuid().ToString("N");
-        var session = new UserSession
-        {
-            Id = Guid.NewGuid(),
-            SessionId = sessionId,
-            UserId = user.Id,
-            Email = user.Email,
-            FullName = user.FullName,
-            CreatedAt = DateTime.UtcNow,
-            ExpiresAt = DateTime.UtcNow.AddDays(7)
-        };
+        var userDto = await BuildUserDtoAsync(context, user, cancellationToken);
+        var token = jwtService.CreateToken(user, out var expiresAt);
+        return new AuthResultDto(token, userDto, expiresAt);
+    }
 
-        await context.UserSessions.AddAsync(session, cancellationToken);
-        await context.SaveChangesAsync(cancellationToken);
+    /// <summary>Dựng UserDto kèm HasPassword + AuthProvider (dùng chung mọi endpoint trả thông tin user).</summary>
+    public static async Task<UserDto> BuildUserDtoAsync(AppDbContext context, User user, CancellationToken cancellationToken)
+    {
+        var provider = await context.UserExternalIdentities
+            .AsNoTracking()
+            .Where(i => i.UserId == user.Id)
+            .OrderBy(i => i.CreatedAt)
+            .Select(i => i.Provider)
+            .FirstOrDefaultAsync(cancellationToken);
 
-        return new UserDto(user.Id, user.Email, user.FullName, user.PhoneNumber, user.Address, user.Role, sessionId);
+        return new UserDto(
+            user.Id,
+            user.Email,
+            user.FullName,
+            user.PhoneNumber,
+            user.Address,
+            user.Role,
+            HasPassword: !string.IsNullOrEmpty(user.PasswordHash),
+            AuthProvider: provider);
     }
 }
 
-// 1. Register Command
-public record RegisterCommand(string Email, string Password, string FullName, string? PhoneNumber, string? Address)
-    : IRequest<ApiResponse<RegisterResponseDto>>;
+// 1. Register Command — CN-01: KHÔNG còn OTP/xác thực email, tài khoản dùng ngay
+public record RegisterCommand(string Email, string Password, string FullName, string? PhoneNumber, string? Address, string? ConfirmPassword = null)
+    : IRequest<ApiResponse<AuthResultDto>>;
 
-public class RegisterCommandHandler : IRequestHandler<RegisterCommand, ApiResponse<RegisterResponseDto>>
+public class RegisterCommandHandler : IRequestHandler<RegisterCommand, ApiResponse<AuthResultDto>>
 {
     private readonly AppDbContext _context;
     private readonly IKafkaProducer _kafkaProducer;
     private readonly IHubContext<NotificationHub, INotificationClient> _hubContext;
-    private readonly IOtpService _otpService;
+    private readonly IJwtService _jwtService;
 
     public RegisterCommandHandler(
         AppDbContext context,
         IKafkaProducer kafkaProducer,
         IHubContext<NotificationHub, INotificationClient> hubContext,
-        IOtpService otpService)
+        IJwtService jwtService)
     {
         _context = context;
         _kafkaProducer = kafkaProducer;
         _hubContext = hubContext;
-        _otpService = otpService;
+        _jwtService = jwtService;
     }
 
-    public async Task<ApiResponse<RegisterResponseDto>> Handle(RegisterCommand request, CancellationToken cancellationToken)
+    public async Task<ApiResponse<AuthResultDto>> Handle(RegisterCommand request, CancellationToken cancellationToken)
     {
-        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        // Trim khoảng trắng đầu/cuối mọi trường text trước khi validate và lưu
+        var normalizedEmail = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        var fullName = (request.FullName ?? string.Empty).Trim();
+        var phoneNumber = request.PhoneNumber?.Trim();
+        var address = request.Address?.Trim();
+
+        // Validate đúng câu chữ CN-01
+        if (IdentityValidation.ValidateFullName(fullName) is { } nameError)
+        {
+            return ApiResponse<AuthResultDto>.Fail(nameError);
+        }
+
+        if (IdentityValidation.ValidateEmailFormat(normalizedEmail) is { } emailError)
+        {
+            return ApiResponse<AuthResultDto>.Fail(emailError);
+        }
+
+        // SĐT BẮT BUỘC theo CN-01 (10 số, bắt đầu bằng 0) và phải duy nhất
+        if (IdentityValidation.ValidatePhoneFormat(phoneNumber) is { } phoneError)
+        {
+            return ApiResponse<AuthResultDto>.Fail(phoneError);
+        }
 
         var passwordError = PasswordPolicy.Validate(request.Password);
         if (passwordError != null)
         {
-            return ApiResponse<RegisterResponseDto>.Fail(passwordError);
+            return ApiResponse<AuthResultDto>.Fail(passwordError);
+        }
+
+        if (!string.IsNullOrEmpty(request.ConfirmPassword) && request.ConfirmPassword != request.Password)
+        {
+            return ApiResponse<AuthResultDto>.Fail("Mật khẩu xác nhận không khớp");
         }
 
         if (await _context.Users.AnyAsync(u => u.Email == normalizedEmail, cancellationToken))
         {
-            return ApiResponse<RegisterResponseDto>.Fail("Email này đã được sử dụng. Vui lòng chọn email khác hoặc đăng nhập.");
+            return ApiResponse<AuthResultDto>.Fail("Email đã được sử dụng");
         }
 
-        var passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+        if (await _context.Users.AnyAsync(u => u.PhoneNumber == phoneNumber, cancellationToken))
+        {
+            return ApiResponse<AuthResultDto>.Fail("Số điện thoại đã được sử dụng");
+        }
+
         var user = new User
         {
             Id = Guid.NewGuid(),
             Email = normalizedEmail,
-            PasswordHash = passwordHash,
-            FullName = request.FullName.Trim(),
-            PhoneNumber = request.PhoneNumber?.Trim(),
-            Address = request.Address?.Trim(),
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+            FullName = fullName,
+            PhoneNumber = phoneNumber,
+            Address = string.IsNullOrEmpty(address) ? null : address,
             Role = "Customer",
             CreatedAt = DateTime.UtcNow,
-            // Nghiệp vụ v3: tài khoản mới tạo CHƯA được kích hoạt, phải xác thực email trước khi đăng nhập/mua hàng
-            EmailVerified = false
+            // CN-01: không có bước xác thực email — tài khoản hoạt động ngay sau khi đăng ký
+            EmailVerified = true,
+            EmailVerifiedAt = DateTime.UtcNow
         };
 
         var welcomeNotification = new Notification
@@ -143,7 +207,6 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, ApiRespon
         await _context.Notifications.AddAsync(welcomeNotification, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
 
-        // Real-time notification via SignalR
         var notifDto = new NotificationDto(
             welcomeNotification.Id,
             welcomeNotification.Title,
@@ -154,7 +217,6 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, ApiRespon
         );
         await _hubContext.Clients.Group(NotificationGroups.ForUser(user.Id)).ReceiveNotification(notifDto);
 
-        // Kafka Event
         await _kafkaProducer.PublishAsync(
             "notification-events",
             user.Email,
@@ -162,93 +224,51 @@ public class RegisterCommandHandler : IRequestHandler<RegisterCommand, ApiRespon
             cancellationToken
         );
 
-        // Gửi mã xác thực về đúng email vừa đăng ký. KHÔNG tạo session ở bước này:
-        // session chỉ được tạo sau khi xác thực email thành công (POST /api/auth/verify-email).
-        var otpResult = await _otpService.IssueCodeAsync(user.Email, OtpPurposes.VerifyEmail, cancellationToken);
-
-        var dto = new RegisterResponseDto(user.Email, RequiresVerification: true, otpResult.Success ? otpResult.DebugCode : null);
-        return ApiResponse<RegisterResponseDto>.Ok(dto, "Đăng ký thành công. Vui lòng nhập mã xác thực đã gửi về email của bạn.");
+        var authResult = await AuthTokenFactory.CreateAuthResultAsync(_context, _jwtService, user, cancellationToken);
+        return ApiResponse<AuthResultDto>.Ok(authResult, "Đăng ký thành công");
     }
 }
 
-// 2. Login Command
-public record LoginCommand(string Email, string Password) : IRequest<ApiResponse<UserDto>>;
+// 2. Login Command — CN-02: sai thông tin → một câu chung "Email hoặc mật khẩu không đúng"
+public record LoginCommand(string Email, string Password) : IRequest<ApiResponse<AuthResultDto>>;
 
-public class LoginCommandHandler : IRequestHandler<LoginCommand, ApiResponse<UserDto>>
+public class LoginCommandHandler : IRequestHandler<LoginCommand, ApiResponse<AuthResultDto>>
 {
     private readonly AppDbContext _context;
     private readonly IKafkaProducer _kafkaProducer;
     private readonly IHubContext<NotificationHub, INotificationClient> _hubContext;
+    private readonly IJwtService _jwtService;
 
     public LoginCommandHandler(
-        AppDbContext context, 
+        AppDbContext context,
         IKafkaProducer kafkaProducer,
-        IHubContext<NotificationHub, INotificationClient> hubContext)
+        IHubContext<NotificationHub, INotificationClient> hubContext,
+        IJwtService jwtService)
     {
         _context = context;
         _kafkaProducer = kafkaProducer;
         _hubContext = hubContext;
+        _jwtService = jwtService;
     }
 
-    public async Task<ApiResponse<UserDto>> Handle(LoginCommand request, CancellationToken cancellationToken)
+    public async Task<ApiResponse<AuthResultDto>> Handle(LoginCommand request, CancellationToken cancellationToken)
     {
-        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var normalizedEmail = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == normalizedEmail, cancellationToken);
-        var now = DateTime.UtcNow;
 
-        if (user == null)
+        // Tài khoản social thuần túy (PasswordHash = null) cũng rơi vào câu lỗi chung này.
+        var passwordMatches = user != null
+            && !string.IsNullOrEmpty(user.PasswordHash)
+            && BCrypt.Net.BCrypt.Verify(request.Password ?? string.Empty, user.PasswordHash);
+
+        if (user == null || !passwordMatches)
         {
-            return ApiResponse<UserDto>.Fail("Email hoặc mật khẩu không chính xác.");
+            // CN-02 E1: không nêu rõ sai email hay mật khẩu; CN bỏ hẳn khóa mềm tài khoản.
+            return ApiResponse<AuthResultDto>.Fail("Email hoặc mật khẩu không đúng");
         }
 
-        // (a) Đang bị khóa mềm: từ chối bằng câu lỗi chung, kể cả khi mật khẩu đúng
-        // (không lộ thông tin tài khoản đang bị khóa; chủ tài khoản mở khóa ngay bằng OTP).
-        if (user.LockedUntil.HasValue && user.LockedUntil.Value > now)
-        {
-            return ApiResponse<UserDto>.Fail("Email hoặc mật khẩu không chính xác.");
-        }
+        var authResult = await AuthTokenFactory.CreateAuthResultAsync(_context, _jwtService, user, cancellationToken);
 
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
-        {
-            // (b) Sai mật khẩu: đếm theo cửa sổ trượt 15 phút, sai 10 lần trong cửa sổ → khóa mềm.
-            if (!user.FailedLoginWindowStart.HasValue || (now - user.FailedLoginWindowStart.Value).TotalMinutes > 15)
-            {
-                user.FailedLoginWindowStart = now;
-                user.FailedLoginCount = 1;
-            }
-            else
-            {
-                user.FailedLoginCount++;
-            }
-
-            if (user.FailedLoginCount >= 10)
-            {
-                var lockMinutes = Math.Min(15 * (int)Math.Pow(2, user.LockEscalations), 60);
-                user.LockedUntil = now.AddMinutes(lockMinutes);
-                user.LockEscalations++;
-                user.FailedLoginCount = 0;
-                user.FailedLoginWindowStart = null;
-            }
-
-            await _context.SaveChangesAsync(cancellationToken);
-            return ApiResponse<UserDto>.Fail("Email hoặc mật khẩu không chính xác.");
-        }
-
-        // (c) Đúng mật khẩu nhưng email chưa xác thực → chặn, chuyển tới bước nhập mã xác thực
-        if (!user.EmailVerified)
-        {
-            return ApiResponse<UserDto>.Fail("Tài khoản chưa được xác thực. Vui lòng nhập mã đã gửi về email của bạn.");
-        }
-
-        // (d) Đúng + đã xác thực: reset bộ đếm sai, tạo session như cũ
-        user.FailedLoginCount = 0;
-        user.FailedLoginWindowStart = null;
-        user.LockedUntil = null;
-        await _context.SaveChangesAsync(cancellationToken);
-
-        var userDto = await AuthSessionFactory.CreateSessionAsync(_context, user, cancellationToken);
-
-        // Real-time login alert via SignalR
         var loginNotif = new NotificationDto(
             Guid.NewGuid(),
             "Đăng nhập thành công",
@@ -266,6 +286,6 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, ApiResponse<Use
             cancellationToken
         );
 
-        return ApiResponse<UserDto>.Ok(userDto, "Đăng nhập thành công.");
+        return ApiResponse<AuthResultDto>.Ok(authResult, "Đăng nhập thành công.");
     }
 }

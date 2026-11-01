@@ -61,6 +61,7 @@ public class GetPaymentStatusQueryHandler : IRequestHandler<GetPaymentStatusQuer
                     {
                         await using var tx = await _context.Database.BeginTransactionAsync(cancellationToken);
                         trackedOrder.Status = OrderStatus.Paid;
+                        trackedOrder.StockDeducted = true; // đã trừ kho thật → hủy đơn phải hoàn kho (CN-08.3)
 
                         foreach (var item in trackedOrder.Items)
                         {

@@ -1,10 +1,10 @@
-import React from 'react';
-import { ShoppingBag, X, CreditCard, Clock, Copy, CheckCircle2, RotateCcw, ArrowLeft } from 'lucide-react';
+import React, { useState } from 'react';
+import { ShoppingBag, X, CreditCard, Clock, Copy, CheckCircle2, RotateCcw, ArrowLeft, AlertTriangle, MapPin } from 'lucide-react';
 import { CartItem, Voucher, CheckoutResult, User } from '../../types';
 import { formatPrice, formatTime } from '../../utils/formatters';
 import { CartItemRow } from './CartItemRow';
 import { VoucherSection } from './VoucherSection';
-import { CheckoutForm } from '../checkout/CheckoutForm';
+import { CheckoutForm, CheckoutFormValues } from '../checkout/CheckoutForm';
 import { PayOSGatewayView } from '../checkout/PayOSGatewayView';
 
 export interface CartDrawerProps {
@@ -17,6 +17,8 @@ export interface CartDrawerProps {
   appliedVoucher: { code: string; discountAmount: number } | null;
   voucherMessage: string | null;
   rawSubTotal: number;
+  /** Phí ship ước tính (O1: 25.000đ, miễn phí khi tạm tính ≥ 299.000đ) — finalTotal đã gồm phí này. */
+  shippingFee?: number;
   finalTotal: number;
   totalItemCount: number;
   customerName: string;
@@ -32,9 +34,19 @@ export interface CartDrawerProps {
   orderStatus: string;
   timeLeft: number;
   onUpdateQuantity: (productId: string, delta: number) => void;
+  /** Đặt số lượng trực tiếp cho một dòng giỏ (CN-06.3). */
+  onSetQuantity?: (productId: string, quantity: number) => void;
+  /** Xóa hẳn một dòng giỏ sau khi người dùng xác nhận (CN-06.4). */
+  onRemoveItem?: (productId: string) => void;
+  /** Lỗi đặt hàng từ BE — hiển thị nguyên văn phía trên form thanh toán (CN-07). */
+  checkoutError?: string | null;
+  /** Giá trong giỏ vừa thay đổi → hiển thị checkout-price-changed-notice, yêu cầu xác nhận lại (CN-07 E2). */
+  priceChangedPending?: boolean;
+  /** Địa chỉ giao hàng của đơn vừa đặt — hiển thị trong order-success-view. */
+  lastOrderAddress?: string;
   onApplyVoucher: (code?: string) => void;
   onRemoveVoucher: () => void;
-  onCheckout: (e: React.FormEvent) => void;
+  onCheckout: (e: React.FormEvent, values?: CheckoutFormValues) => void;
   onNavigateToOrders: () => void;
   onNavigateToHome: () => void;
   onCopyOrderCode?: (orderCode: number) => void;
@@ -56,6 +68,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   appliedVoucher,
   voucherMessage,
   rawSubTotal,
+  shippingFee,
   finalTotal,
   totalItemCount,
   customerName,
@@ -71,6 +84,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   orderStatus,
   timeLeft,
   onUpdateQuantity,
+  onSetQuantity,
+  onRemoveItem,
+  checkoutError,
+  priceChangedPending,
+  lastOrderAddress,
   onApplyVoucher,
   onRemoveVoucher,
   onCheckout,
@@ -84,6 +102,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onRequireAuth,
   isModal = false,
 }) => {
+  // Dòng giỏ đang chờ xác nhận xóa (CN-06.4 — áp cho cả nút Xóa và giảm về 0).
+  const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
+  const pendingRemoveItem = pendingRemoveId ? cart.find(i => i.product.id === pendingRemoveId) : undefined;
+  const hasUnavailable = cart.some(i => i.isAvailable === false);
+  const isCodSuccess = !!checkoutResult && checkoutResult.paymentMethod === 'COD';
+
   if (isOpen === false) return null;
 
   const content = (
@@ -111,7 +135,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           )}
           <h2 className={isModal ? 'modal-title' : 'page-title'} style={{ margin: 0 }} data-testid="cart-drawer-title">
             <ShoppingBag size={24} color="var(--primary)" />
-            {checkoutResult ? 'Thanh toán đơn hàng PayOS (Trực tiếp)' : 'Giỏ hàng & Đơn hàng của bạn'}
+            {checkoutResult
+              ? isCodSuccess
+                ? 'Đặt hàng thành công'
+                : 'Thanh toán đơn hàng PayOS (Trực tiếp)'
+              : 'Giỏ hàng & Đơn hàng của bạn'}
           </h2>
         </div>
         {isModal && (
@@ -127,7 +155,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           {cart.length === 0 ? (
             <div className="cart-empty-box" style={{ textAlign: 'center', padding: '60px 0', color: '#9ca3af' }} data-testid="cart-empty-state">
               <ShoppingBag size={56} style={{ margin: '0 auto 16px', opacity: 0.3 }} />
-              <h3 style={{ fontSize: '1.2rem', marginBottom: 8, color: 'var(--text-main)' }}>Giỏ hàng của bạn đang trống.</h3>
+              <h3 style={{ fontSize: '1.2rem', marginBottom: 8, color: 'var(--text-main)' }}>Giỏ hàng trống</h3>
               <p style={{ marginBottom: 20 }}>Khám phá các sản phẩm hot deal giá sốc tại DAFL Store!</p>
               <button
                 type="button"
@@ -145,12 +173,19 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <div className={isModal ? '' : 'cart-two-columns-layout'}>
               <div className="cart-left-col">
                 {/* Cart Items List */}
+                {hasUnavailable && (
+                  <div className="cart-unavailable-banner">
+                    Một số sản phẩm trong giỏ đã ngừng bán hoặc hết hàng — các sản phẩm này không được tính vào tổng tiền và không thể đặt hàng.
+                  </div>
+                )}
                 <div style={{ maxHeight: isModal ? 220 : undefined, overflowY: isModal ? 'auto' : undefined, marginBottom: 16 }} data-testid="cart-items-list">
                   {cart.map(item => (
                     <CartItemRow
                       key={item.product.id}
                       item={item}
                       onUpdateQuantity={onUpdateQuantity}
+                      onSetQuantity={onSetQuantity}
+                      onRemoveRequest={(productId) => setPendingRemoveId(productId)}
                     />
                   ))}
                 </div>
@@ -192,11 +227,34 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       <span data-testid="cart-voucher-discount">-{formatPrice(appliedVoucher.discountAmount)}</span>
                     </div>
                   )}
+                  {shippingFee !== undefined && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                      <span>Phí vận chuyển:</span>
+                      <span data-testid="cart-shipping-fee">{shippingFee === 0 ? 'Miễn phí' : formatPrice(shippingFee)}</span>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 10, borderTop: '1px solid var(--border-subtle)', fontSize: '1.2rem', fontWeight: 800 }}>
                     <span>Tổng thanh toán:</span>
                     <span style={{ color: '#e40046' }} data-testid="cart-final-total">{formatPrice(finalTotal)}</span>
                   </div>
                 </div>
+
+                {priceChangedPending && (
+                  <div className="checkout-notice checkout-notice-warning" data-testid="checkout-price-changed-notice">
+                    <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                    <span>
+                      Giá của một số sản phẩm trong giỏ vừa thay đổi. Vui lòng kiểm tra lại giỏ hàng,
+                      rồi nhấn nút đặt hàng một lần nữa để xác nhận mức giá mới.
+                    </span>
+                  </div>
+                )}
+
+                {checkoutError && (
+                  <div className="checkout-notice checkout-notice-error" data-testid="checkout-error-msg">
+                    <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                    <span>{checkoutError}</span>
+                  </div>
+                )}
 
                 {/* Checkout Form */}
                 <CheckoutForm
@@ -212,13 +270,94 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   isCheckingOut={isCheckingOut}
                   onSubmit={onCheckout}
                   user={user}
-                  isAuthRequired={true}
                   onRequireAuth={onRequireAuth}
                 />
               </div>
             </div>
           )}
+
+          {/* Hộp xác nhận xóa sản phẩm khỏi giỏ (CN-06.4) */}
+          {pendingRemoveItem && (
+            <div className="modal-overlay" onClick={() => setPendingRemoveId(null)}>
+              <div className="modal-content remove-confirm-dialog" onClick={e => e.stopPropagation()} data-testid="cart-remove-confirm-dialog">
+                <div className="modal-header">
+                  <h2 className="modal-title" style={{ margin: 0 }}>Xóa sản phẩm khỏi giỏ?</h2>
+                  <button className="close-btn" onClick={() => setPendingRemoveId(null)} title="Đóng">
+                    <X size={20} />
+                  </button>
+                </div>
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: 1.55, marginBottom: 18 }}>
+                  Bạn có chắc muốn xóa <strong style={{ color: 'var(--text-main)' }}>{pendingRemoveItem.product.name}</strong> khỏi giỏ hàng không?
+                </p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setPendingRemoveId(null)}
+                    data-testid="cart-remove-cancel-btn"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      onRemoveItem?.(pendingRemoveItem.product.id);
+                      setPendingRemoveId(null);
+                    }}
+                    data-testid="cart-remove-confirm-btn"
+                  >
+                    Xóa khỏi giỏ
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
+      ) : isCodSuccess ? (
+        /* View 2a: Đặt hàng COD thành công (CN-07.5) */
+        <div style={{ textAlign: 'center', padding: '30px 10px' }} data-testid="order-success-view">
+          <CheckCircle2 size={56} color="#10b981" style={{ margin: '0 auto 16px' }} />
+          <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#16a34a', marginBottom: 8 }}>
+            Đặt hàng thành công!
+          </h3>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>
+            Mã đơn hàng của bạn: <strong style={{ color: 'var(--text-main)', fontSize: '1.05rem' }} data-testid="order-success-code">
+              {checkoutResult.orderDisplayCode || `#${checkoutResult.orderCode}`}
+            </strong>
+          </p>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>
+            Tổng thanh toán: <strong style={{ color: '#e40046', fontSize: '1.1rem' }}>{formatPrice(checkoutResult.totalAmount)}</strong>
+            {' '}— thanh toán khi nhận hàng (COD).
+          </p>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>
+            Trạng thái đơn: <strong style={{ color: 'var(--text-main)' }}>Chờ xác nhận</strong>
+          </p>
+          {lastOrderAddress && (
+            <p style={{ color: 'var(--text-muted)', marginBottom: 20, display: 'flex', alignItems: 'flex-start', gap: 6, justifyContent: 'center' }}>
+              <MapPin size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>Giao đến: {lastOrderAddress}</span>
+            </p>
+          )}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 14 }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={onNavigateToOrders}
+              data-testid="view-orders-btn"
+            >
+              Xem đơn hàng
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onNavigateToHome}
+              data-testid="continue-shopping-btn"
+            >
+              Tiếp tục mua sắm
+            </button>
+          </div>
+        </div>
       ) : (
         /* View 2: Embedded PayOS Payment View directly on the web page */
         <div data-testid="checkout-payment-view">

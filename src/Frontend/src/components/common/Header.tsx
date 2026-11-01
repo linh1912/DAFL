@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   ShoppingBag, Search, Bell, LogOut, User as UserIcon,
-  Sun, Moon, ChevronDown, X, Package, Store, Newspaper, Heart
+  Sun, Moon, ChevronDown, X, Package, Store, Newspaper
 } from 'lucide-react';
 import { User } from '../../types';
 
@@ -97,10 +97,6 @@ export const Header: React.FC<HeaderProps> = ({
           <button type="button" className="header-utility" onClick={() => onNavigate('home')}>
             <Newspaper size={20} />
             <span>Tạp chí</span>
-          </button>
-          <button type="button" className="header-utility" onClick={() => onNavigate('home')}>
-            <Heart size={20} />
-            <span>Yêu thích</span>
           </button>
         </nav>
 

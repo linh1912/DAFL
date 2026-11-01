@@ -79,6 +79,8 @@ describe('Cart Management Module - CartDrawer Component', () => {
     orderStatus: 'Pending',
     timeLeft: 900,
     onUpdateQuantity: vi.fn(),
+    onSetQuantity: vi.fn(),
+    onRemoveItem: vi.fn(),
     onApplyVoucher: vi.fn(),
     onRemoveVoucher: vi.fn(),
     onCheckout: vi.fn((e) => e.preventDefault()),
@@ -94,10 +96,10 @@ describe('Cart Management Module - CartDrawer Component', () => {
 
     expect(screen.getByTestId('cart-drawer')).toBeInTheDocument();
     expect(screen.getByTestId('cart-item-name-prod-1')).toHaveTextContent('Áo Polo Thể Thao Nam');
-    expect(screen.getByTestId('cart-item-qty-prod-1')).toHaveTextContent('2');
+    expect(screen.getByTestId('cart-item-qty-prod-1')).toHaveValue('2');
 
     expect(screen.getByTestId('cart-item-name-prod-2')).toHaveTextContent('Bình Giữ Nhiệt 500ml');
-    expect(screen.getByTestId('cart-item-qty-prod-2')).toHaveTextContent('1');
+    expect(screen.getByTestId('cart-item-qty-prod-2')).toHaveValue('1');
   });
 
   it('TC_CART_02: Should trigger onUpdateQuantity with +1 when clicking increase button', () => {
@@ -171,7 +173,7 @@ describe('Cart Management Module - CartDrawer Component', () => {
     render(<CartDrawer {...defaultProps} cart={[]} />);
 
     expect(screen.getByTestId('cart-empty-state')).toBeInTheDocument();
-    expect(screen.getByText('Giỏ hàng của bạn đang trống.')).toBeInTheDocument();
+    expect(screen.getByText('Giỏ hàng trống')).toBeInTheDocument();
     expect(screen.queryByTestId('cart-items-list')).not.toBeInTheDocument();
     expect(screen.queryByTestId('checkout-form')).not.toBeInTheDocument();
   });
@@ -183,5 +185,89 @@ describe('Cart Management Module - CartDrawer Component', () => {
     const errorBox = screen.getByTestId('voucher-error-msg');
     expect(errorBox).toBeInTheDocument();
     expect(errorBox).toHaveTextContent(errorMsg);
+  });
+
+  // ==========================================
+  // CN-06/CN-07: xác nhận xóa, marker dòng giỏ, view thành công COD
+  // ==========================================
+  it('TC_CART_09: Removing an item requires the confirm dialog before onRemoveItem fires (CN-06.4)', () => {
+    const onRemoveItem = vi.fn();
+    render(<CartDrawer {...defaultProps} onRemoveItem={onRemoveItem} />);
+
+    fireEvent.click(screen.getByTestId('cart-item-remove-prod-1'));
+    expect(screen.getByTestId('cart-remove-confirm-dialog')).toBeInTheDocument();
+    expect(onRemoveItem).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('cart-remove-cancel-btn'));
+    expect(screen.queryByTestId('cart-remove-confirm-dialog')).not.toBeInTheDocument();
+    expect(onRemoveItem).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('cart-item-remove-prod-1'));
+    fireEvent.click(screen.getByTestId('cart-remove-confirm-btn'));
+    expect(onRemoveItem).toHaveBeenCalledWith('prod-1');
+  });
+
+  it('TC_CART_10: Decreasing quantity to zero opens the same remove confirmation (CN-06.4)', () => {
+    const onUpdateQuantity = vi.fn();
+    render(<CartDrawer {...defaultProps} onUpdateQuantity={onUpdateQuantity} />);
+
+    // prod-2 đang có số lượng 1 → bấm giảm là về 0 → hộp xác nhận thay vì gọi update.
+    fireEvent.click(screen.getByTestId('cart-item-minus-prod-2'));
+    expect(screen.getByTestId('cart-remove-confirm-dialog')).toBeInTheDocument();
+    expect(onUpdateQuantity).not.toHaveBeenCalledWith('prod-2', -1);
+  });
+
+  it('TC_CART_11: Unavailable and price-changed items are marked and excluded messaging shows (CN-06.5)', () => {
+    const items: CartItem[] = [
+      {
+        ...mockCartItems[0],
+        isAvailable: false,
+      },
+      {
+        ...mockCartItems[1],
+        priceChanged: true,
+        previousPrice: 140000,
+      },
+    ];
+    render(<CartDrawer {...defaultProps} cart={items} />);
+
+    expect(screen.getByTestId('cart-item-unavailable-prod-1')).toBeInTheDocument();
+    expect(screen.getByTestId('cart-item-price-changed-prod-2')).toHaveTextContent('Giá vừa thay đổi');
+  });
+
+  it('TC_CART_12: COD checkout result renders the order success view with the DH display code (CN-07.5)', () => {
+    render(
+      <CartDrawer
+        {...defaultProps}
+        checkoutResult={{
+          orderId: 'order-1',
+          orderCode: 202611010001,
+          orderDisplayCode: 'DH20261101-0001',
+          paymentMethod: 'COD',
+          totalAmount: 575000,
+          expiresAt: new Date().toISOString(),
+        }}
+        lastOrderAddress="Số 1 Đại Cồ Việt, Hà Nội"
+      />
+    );
+
+    expect(screen.getByTestId('order-success-view')).toBeInTheDocument();
+    expect(screen.getByTestId('order-success-code')).toHaveTextContent('DH20261101-0001');
+    expect(screen.getByTestId('view-orders-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('continue-shopping-btn')).toBeInTheDocument();
+    expect(screen.queryByTestId('checkout-payment-view')).not.toBeInTheDocument();
+  });
+
+  it('TC_CART_13: Checkout error and price-changed notice are surfaced above the form (CN-07)', () => {
+    render(
+      <CartDrawer
+        {...defaultProps}
+        checkoutError="Mã giảm giá không tồn tại."
+        priceChangedPending={true}
+      />
+    );
+
+    expect(screen.getByTestId('checkout-error-msg')).toHaveTextContent('Mã giảm giá không tồn tại.');
+    expect(screen.getByTestId('checkout-price-changed-notice')).toBeInTheDocument();
   });
 });

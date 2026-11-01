@@ -70,6 +70,7 @@ public class PayOSWebhookCommandHandler : IRequestHandler<PayOSWebhookCommand, A
             try
             {
                 order.Status = OrderStatus.Paid;
+                order.StockDeducted = true; // từ thời điểm này, hủy đơn phải hoàn kho thật (CN-08.3)
 
             // Convert reserved stock into finalized deduction
             foreach (var item in order.Items)

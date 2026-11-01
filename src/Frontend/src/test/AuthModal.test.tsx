@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { AuthModal } from '../components/auth/AuthModal';
 
@@ -24,11 +25,54 @@ describe('Authentication Module - AuthModal Component', () => {
     setRegisterConfirmPassword: vi.fn(),
     registerPhone: '',
     setRegisterPhone: vi.fn(),
-    registerAddress: '',
-    setRegisterAddress: vi.fn(),
     onLogin: vi.fn((e) => e.preventDefault()),
     onRegister: vi.fn((e) => e.preventDefault()),
-    onFillDemoAccount: vi.fn(),
+  };
+
+  // Harness có state thật để test được validate phía client của AuthModal.
+  const renderStatefulAuthModal = (extraProps: Record<string, unknown> = {}) => {
+    const onLogin = vi.fn((e: React.FormEvent, _values?: unknown) => e.preventDefault());
+    const onRegister = vi.fn((e: React.FormEvent, _values?: unknown) => e.preventDefault());
+    const onClearAuthErrors = vi.fn();
+
+    const Harness = () => {
+      const [tab, setTab] = React.useState<'login' | 'register'>('login');
+      const [loginEmail, setLoginEmail] = React.useState('');
+      const [loginPassword, setLoginPassword] = React.useState('');
+      const [name, setName] = React.useState('');
+      const [email, setEmail] = React.useState('');
+      const [password, setPassword] = React.useState('');
+      const [confirmPassword, setConfirmPassword] = React.useState('');
+      const [phone, setPhone] = React.useState('');
+      return (
+        <AuthModal
+          {...defaultProps}
+          authTab={tab}
+          setAuthTab={setTab}
+          loginEmail={loginEmail}
+          setLoginEmail={setLoginEmail}
+          loginPassword={loginPassword}
+          setLoginPassword={setLoginPassword}
+          registerName={name}
+          setRegisterName={setName}
+          registerEmail={email}
+          setRegisterEmail={setEmail}
+          registerPassword={password}
+          setRegisterPassword={setPassword}
+          registerConfirmPassword={confirmPassword}
+          setRegisterConfirmPassword={setConfirmPassword}
+          registerPhone={phone}
+          setRegisterPhone={setPhone}
+          onLogin={onLogin}
+          onRegister={onRegister}
+          onClearAuthErrors={onClearAuthErrors}
+          {...extraProps}
+        />
+      );
+    };
+
+    const utils = render(<Harness />);
+    return { ...utils, onLogin, onRegister, onClearAuthErrors };
   };
 
   // ==========================================
@@ -53,7 +97,7 @@ describe('Authentication Module - AuthModal Component', () => {
     expect(setAuthTab).toHaveBeenCalledWith('register');
   });
 
-  it('TC_AUTH_03: Should render registration form fields when authTab is register', () => {
+  it('TC_AUTH_03: Should render registration form fields when authTab is register (CN-01: no address field)', () => {
     render(<AuthModal {...defaultProps} authTab="register" />);
 
     expect(screen.getByTestId('register-name-input')).toBeInTheDocument();
@@ -61,7 +105,8 @@ describe('Authentication Module - AuthModal Component', () => {
     expect(screen.getByTestId('register-password-input')).toBeInTheDocument();
     expect(screen.getByTestId('register-confirm-password-input')).toBeInTheDocument();
     expect(screen.getByTestId('register-phone-input')).toBeInTheDocument();
-    expect(screen.getByTestId('register-address-input')).toBeInTheDocument();
+    // CN-01: form đăng ký KHÔNG còn ô địa chỉ (địa chỉ thuộc sổ địa chỉ CN-03.3).
+    expect(screen.queryByTestId('register-address-input')).not.toBeInTheDocument();
     expect(screen.getByTestId('register-submit-btn')).toHaveTextContent('Đăng ký ngay');
   });
 
@@ -79,15 +124,6 @@ describe('Authentication Module - AuthModal Component', () => {
     const submitBtn = screen.getByTestId('login-submit-btn');
     fireEvent.click(submitBtn);
     expect(onLogin).toHaveBeenCalledTimes(1);
-  });
-
-  it('TC_AUTH_05: Should trigger demo account quick-fill', () => {
-    const onFillDemoAccount = vi.fn();
-    render(<AuthModal {...defaultProps} onFillDemoAccount={onFillDemoAccount} />);
-
-    const demoBtn = screen.getByTestId('demo-account-btn');
-    fireEvent.click(demoBtn);
-    expect(onFillDemoAccount).toHaveBeenCalledTimes(1);
   });
 
   it('TC_AUTH_06: Should call onClose when clicking close button', () => {
@@ -124,31 +160,30 @@ describe('Authentication Module - AuthModal Component', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('TC_AUTH_10: Should render the exact gate notice when gateNotice is enabled', () => {
-    render(<AuthModal {...defaultProps} gateNotice={true} />);
+  it('TC_AUTH_10: CN removes the gate notice, OTP verification, forgot-password and lockout UI', () => {
+    render(<AuthModal {...defaultProps} />);
 
-    expect(screen.getByTestId('auth-required-notice')).toHaveTextContent(
-      'Bạn chưa đăng nhập. Vui lòng đăng nhập để thêm sản phẩm vào giỏ hàng — hoặc đăng ký nếu chưa có tài khoản.'
-    );
+    expect(screen.queryByTestId('auth-required-notice')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('register-verify-form')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('forgot-password-form')).not.toBeInTheDocument();
+    expect(screen.queryByText('Quên mật khẩu?')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('login-attempts-warning')).not.toBeInTheDocument();
   });
 
-  it('TC_AUTH_11: Should show per-field login errors and remaining attempts', () => {
+  it('TC_AUTH_11: Should show per-field login errors from props', () => {
     render(
       <AuthModal
         {...defaultProps}
         loginEmailError="Email không đúng định dạng."
-        loginPasswordError="Email hoặc mật khẩu không chính xác."
-        loginFailureCount={3}
+        loginPasswordError="Email hoặc mật khẩu không đúng"
       />
     );
 
     expect(screen.getByTestId('login-email-error')).toHaveTextContent('Email không đúng định dạng.');
-    expect(screen.getByTestId('login-password-error')).toHaveTextContent('Email hoặc mật khẩu không chính xác.');
-    expect(screen.getByTestId('login-attempts-warning')).toHaveTextContent(
-      'Còn 2 lần thử trước khi cần xác minh thêm.'
-    );
-    expect(screen.getByText('Đăng nhập bằng mã OTP')).toBeInTheDocument();
-    expect(screen.getByText('Quên mật khẩu?')).toBeInTheDocument();
+    expect(screen.getByTestId('login-password-error')).toHaveTextContent('Email hoặc mật khẩu không đúng');
+    expect(screen.queryByTestId('login-attempts-warning')).not.toBeInTheDocument();
+    expect(screen.queryByText('Đăng nhập bằng mã OTP')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('demo-account-btn')).not.toBeInTheDocument();
   });
 
   it('TC_AUTH_12: Should include the digit rule in the registration password checklist', () => {
@@ -160,88 +195,139 @@ describe('Authentication Module - AuthModal Component', () => {
     expect(screen.getByTestId('password-rule-special')).toBeInTheDocument();
   });
 
-  it('TC_AUTH_13: Should verify a registration code through six OTP inputs', async () => {
-    const onVerifyEmail = vi.fn(async () => null);
-    const onResendVerification = vi.fn(async () => null);
-    render(
-      <AuthModal
-        {...defaultProps}
-        verificationEmail="new@dafl.vn"
-        verificationNotice="Đã gửi mã xác thực về email của bạn."
-        onVerifyEmail={onVerifyEmail}
-        onResendVerification={onResendVerification}
-      />
-    );
+  // ==========================================
+  // v3.1: bỏ OTP-login + nút demo, validate client theo từng ô
+  // ==========================================
+  it('TC_AUTH_16: Login form uses noValidate and shows per-field errors instead of calling onLogin', () => {
+    const onLogin = vi.fn((e: React.FormEvent) => e.preventDefault());
+    render(<AuthModal {...defaultProps} onLogin={onLogin} />);
 
-    expect(screen.getByTestId('register-verify-btn')).toBeInTheDocument();
-    expect(screen.getByTestId('register-verify-resend')).toBeDisabled();
+    expect(screen.getByTestId('login-form')).toHaveAttribute('novalidate');
+    expect(screen.getByTestId('login-email-input')).not.toBeRequired();
+    expect(screen.getByTestId('login-password-input')).not.toBeRequired();
 
-    const inputs = within(screen.getByTestId('register-verify-otp-input')).getAllByRole('textbox');
-    inputs.forEach((input, index) => fireEvent.change(input, { target: { value: String(index + 1) } }));
-    fireEvent.click(screen.getByTestId('register-verify-btn'));
+    fireEvent.click(screen.getByTestId('login-submit-btn'));
 
-    await waitFor(() => expect(onVerifyEmail).toHaveBeenCalledWith('123456'));
+    expect(screen.getByTestId('login-email-error')).toHaveTextContent('Email không được để trống.');
+    expect(screen.getByTestId('login-password-error')).toHaveTextContent('Mật khẩu không được để trống.');
+    expect(onLogin).not.toHaveBeenCalled();
   });
 
-  it('TC_AUTH_14: Should complete OTP login with request and verify callbacks', async () => {
-    const onOtpLoginRequest = vi.fn(async () => null);
-    const onOtpLoginVerify = vi.fn(async () => null);
+  it('TC_AUTH_17: Credential error is shown only under the password field, never duplicated in the banner', () => {
     render(
       <AuthModal
         {...defaultProps}
-        onOtpLoginRequest={onOtpLoginRequest}
-        onOtpLoginVerify={onOtpLoginVerify}
+        authError="Email hoặc mật khẩu không chính xác."
+        loginPasswordError="Email hoặc mật khẩu không chính xác."
       />
     );
 
-    fireEvent.click(screen.getByText('Đăng nhập bằng mã OTP'));
-    fireEvent.change(screen.getByTestId('otp-login-email-input'), {
-      target: { value: 'demo@dafl.vn' },
-    });
-    fireEvent.click(screen.getByTestId('otp-login-send-btn'));
-
-    await waitFor(() => expect(onOtpLoginRequest).toHaveBeenCalledWith('demo@dafl.vn'));
-    const inputs = within(await screen.findByTestId('otp-login-code-input')).getAllByRole('textbox');
-    inputs.forEach((input, index) => fireEvent.change(input, { target: { value: String(index + 1) } }));
-    fireEvent.click(screen.getByTestId('otp-login-verify-btn'));
-
-    await waitFor(() => expect(onOtpLoginVerify).toHaveBeenCalledWith('demo@dafl.vn', '123456'));
+    expect(screen.queryByTestId('auth-error-msg')).not.toBeInTheDocument();
+    expect(screen.getByTestId('login-password-error')).toHaveTextContent(
+      'Email hoặc mật khẩu không chính xác.'
+    );
   });
 
-  it('TC_AUTH_15: Should complete forgot-password request and reset steps', async () => {
-    const onForgotPasswordRequest = vi.fn(async () => null);
-    const onResetPassword = vi.fn(async () => null);
+  it('TC_AUTH_18: Switching tabs clears all field errors', () => {
+    const { onClearAuthErrors } = renderStatefulAuthModal();
+
+    fireEvent.click(screen.getByTestId('login-submit-btn'));
+    expect(screen.getByTestId('login-email-error')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('auth-tab-register'));
+    expect(onClearAuthErrors).toHaveBeenCalled();
+    expect(screen.queryByTestId('login-email-error')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('auth-tab-login'));
+    expect(screen.queryByTestId('login-email-error')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('login-password-error')).not.toBeInTheDocument();
+  });
+
+  it('TC_AUTH_19: Register submit validates every field with a red message under it (CN-01 messages)', () => {
+    const { onRegister } = renderStatefulAuthModal();
+    fireEvent.click(screen.getByTestId('auth-tab-register'));
+
+    expect(screen.getByTestId('register-form')).toHaveAttribute('novalidate');
+    fireEvent.click(screen.getByTestId('register-submit-btn'));
+
+    expect(screen.getByTestId('register-name-error')).toHaveTextContent('Họ tên không hợp lệ');
+    expect(screen.getByTestId('register-email-error')).toHaveTextContent('Vui lòng nhập email.');
+    expect(screen.getByTestId('register-password-error')).toHaveTextContent('Vui lòng nhập mật khẩu.');
+    expect(screen.getByTestId('register-confirm-password-error')).toHaveTextContent('Vui lòng nhập lại mật khẩu.');
+    expect(screen.getByTestId('register-phone-error')).toHaveTextContent('Số điện thoại không hợp lệ');
+    expect(screen.queryByTestId('register-address-error')).not.toBeInTheDocument();
+    expect(onRegister).not.toHaveBeenCalled();
+  });
+
+  it('TC_AUTH_20: Register shows mismatch under confirm field, trims values and submits when valid', () => {
+    const { onRegister } = renderStatefulAuthModal();
+    fireEvent.click(screen.getByTestId('auth-tab-register'));
+
+    fireEvent.change(screen.getByTestId('register-name-input'), { target: { value: '  Nguyễn Văn A  ' } });
+    fireEvent.change(screen.getByTestId('register-email-input'), { target: { value: '  New@DAFL.vn ' } });
+    fireEvent.change(screen.getByTestId('register-password-input'), { target: { value: 'Password1!' } });
+    fireEvent.change(screen.getByTestId('register-confirm-password-input'), { target: { value: 'Password2!' } });
+    fireEvent.change(screen.getByTestId('register-phone-input'), { target: { value: ' 0912345678 ' } });
+    fireEvent.click(screen.getByTestId('register-submit-btn'));
+
+    expect(screen.getByTestId('register-confirm-password-error')).toHaveTextContent(
+      'Mật khẩu xác nhận không khớp'
+    );
+    expect(onRegister).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByTestId('register-confirm-password-input'), { target: { value: 'Password1!' } });
+    fireEvent.click(screen.getByTestId('register-submit-btn'));
+
+    expect(onRegister).toHaveBeenCalledTimes(1);
+    const submittedValues = onRegister.mock.calls[0][1];
+    expect(submittedValues).toEqual({
+      fullName: 'Nguyễn Văn A',
+      email: 'new@dafl.vn',
+      password: 'Password1!',
+      phoneNumber: '0912345678',
+    });
+  });
+
+  it('TC_AUTH_21: Password checklist turns each rule green as it becomes satisfied', () => {
+    render(<AuthModal {...defaultProps} authTab="register" registerPassword="Pass" />);
+
+    expect(screen.getByTestId('password-rule-upper')).toHaveStyle({ color: 'rgb(22, 163, 74)' });
+    expect(screen.getByTestId('password-rule-upper')).toHaveTextContent('✓');
+    expect(screen.getByTestId('password-rule-len')).not.toHaveStyle({ color: 'rgb(22, 163, 74)' });
+  });
+
+  // ==========================================
+  // CN-01.4 / CN-02 E3: thông báo sau đăng ký + phiên hết hạn + lỗi field từ BE
+  // ==========================================
+  it('TC_AUTH_22: Register success message is shown on the login tab after registration (CN-01.4)', () => {
+    render(<AuthModal {...defaultProps} registerSuccess={true} />);
+
+    expect(screen.getByTestId('register-success-msg')).toHaveTextContent('Đăng ký thành công');
+    expect(screen.getByTestId('login-form')).toBeInTheDocument();
+  });
+
+  it('TC_AUTH_23: Session expired notice is shown when sessionExpired is set (CN-02 E3)', () => {
+    render(<AuthModal {...defaultProps} sessionExpired={true} />);
+
+    expect(screen.getByTestId('session-expired-notice')).toHaveTextContent(
+      'Phiên đăng nhập đã hết hạn'
+    );
+  });
+
+  it('TC_AUTH_24: Server-side register field errors are shown under the matching fields', () => {
     render(
       <AuthModal
         {...defaultProps}
-        onForgotPasswordRequest={onForgotPasswordRequest}
-        onResetPassword={onResetPassword}
+        authTab="register"
+        registerFieldErrors={{
+          email: 'Email đã được sử dụng',
+          phone: 'Số điện thoại đã được sử dụng',
+        }}
       />
     );
 
-    fireEvent.click(screen.getByText('Quên mật khẩu?'));
-    fireEvent.change(screen.getByTestId('forgot-email-input'), {
-      target: { value: 'demo@dafl.vn' },
-    });
-    fireEvent.click(screen.getByTestId('forgot-submit-btn'));
-
-    expect(await screen.findByText(
-      'Nếu email tồn tại trong hệ thống, mã xác nhận đã được gửi đến email của bạn.'
-    )).toBeInTheDocument();
-    fireEvent.change(screen.getByTestId('forgot-otp-input'), { target: { value: '123456' } });
-    fireEvent.change(screen.getByTestId('forgot-new-password-input'), {
-      target: { value: 'Newpass1!' },
-    });
-    fireEvent.change(screen.getByTestId('forgot-confirm-password-input'), {
-      target: { value: 'Newpass1!' },
-    });
-    fireEvent.click(screen.getByTestId('forgot-reset-btn'));
-
-    await waitFor(() => expect(onResetPassword).toHaveBeenCalledWith(
-      'demo@dafl.vn',
-      '123456',
-      'Newpass1!'
-    ));
-    expect(await screen.findByTestId('forgot-success-view')).toBeInTheDocument();
+    expect(screen.getByTestId('register-email-error')).toHaveTextContent('Email đã được sử dụng');
+    expect(screen.getByTestId('register-phone-error')).toHaveTextContent('Số điện thoại đã được sử dụng');
   });
 });
+

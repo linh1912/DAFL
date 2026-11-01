@@ -68,6 +68,14 @@ services:
       - CacheSettings__Enabled=false
       - KafkaSettings__BootstrapServers=kafka:9092
       - Frontend__BaseUrl=http://localhost:${FRONTEND_PORT:-3000}
+      # JWT (CN-02): secret ký token hạn 1 giờ. Đặt JWT_SECRET trong file .env (chuỗi ngẫu nhiên dài) — xem .env.example.
+      # (Bản CN không còn OTP email nên SMTP không còn được dùng.)
+      - Jwt__Secret=${JWT_SECRET:-}
+      # Social login (Google/Facebook): tạo OAuth client / Meta app rồi điền vào .env — xem .env.example.
+      # Để trống → nút provider tương ứng tự ẩn (GET /api/auth/social/config trả enabled = false).
+      - Social__GoogleClientId=${GOOGLE_CLIENT_ID:-}
+      - Social__FacebookAppId=${FACEBOOK_APP_ID:-}
+      - Social__FacebookAppSecret=${FACEBOOK_APP_SECRET:-}
       - PayOS__ClientId=${PAYOS_CLIENT_ID:-demo_client_id}
       - PayOS__ApiKey=${PAYOS_API_KEY:-demo_api_key}
       - PayOS__ChecksumKey=${PAYOS_CHECKSUM_KEY:-demo_checksum_key}

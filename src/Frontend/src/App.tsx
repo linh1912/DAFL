@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  ShoppingBag, Search, Sparkles, CheckCircle2, Clock,
-  CreditCard, ShieldCheck, Zap, X, Plus, Minus, ArrowRight,
-  User as UserIcon, Bell, Star, Tag, LogOut, Check, RefreshCw, Send, Package,
-  Sun, Moon, Smartphone, FileText, Truck, Layers,
-  MapPin, ExternalLink, Calendar, RotateCcw, Receipt, ArrowLeft, Copy, CheckCheck, AlertCircle, ChevronDown
+  ShoppingBag, Sparkles, CheckCircle2, Clock,
+  CreditCard, ShieldCheck, X, Plus, Minus,
+  User as UserIcon, Bell, Star, Tag, LogOut, Check, RefreshCw, Package,
+  MapPin, Calendar, RotateCcw, Receipt, ArrowLeft, Copy, AlertCircle, Truck, FileText, Layers
 } from 'lucide-react';
 import * as signalR from '@microsoft/signalr';
 import {
   Category, Product, ProductDetail, CartItem, Voucher,
-  CheckoutResult, ApiResponse, User, NotificationItem, OrderHistory, Evaluation, AppRoute
+  CheckoutResult, ApiResponse, User, NotificationItem, OrderHistory, AppRoute,
+  AuthResult, ServerCartDto
 } from './types';
 import {
   FALLBACK_CATEGORIES, FALLBACK_PRODUCTS, FALLBACK_VOUCHERS, FALLBACK_NOTIFICATIONS
@@ -22,8 +22,15 @@ import { ProductCard } from './components/product/ProductCard';
 import { ProductGallery } from './components/product/ProductGallery';
 import { resolveGalleryImages } from './utils/images';
 import { CartDrawer } from './components/cart/CartDrawer';
-import { AuthModal } from './components/auth/AuthModal';
+import { AuthModal, RegisterFormValues, RegisterFieldErrors, PasswordRuleList } from './components/auth/AuthModal';
+import { SocialProviderKey, SOCIAL_PROVIDER_LABEL } from './utils/socialAuth';
+import { CheckoutFormValues } from './components/checkout/CheckoutForm';
 import { PayOSGatewayView } from './components/checkout/PayOSGatewayView';
+import { AddressBook } from './components/profile/AddressBook';
+import {
+  apiFetch, apiJson, getToken, setToken, clearToken,
+  setSessionExpiredHandler, newIdempotencyKey, GUEST_CART_STORAGE_KEY,
+} from './utils/api';
 
 import {
   Routes,
@@ -38,18 +45,78 @@ import { MockPayOSStandalonePage } from './components/checkout/MockPayOSStandalo
 import { PaymentSuccessPage } from './components/checkout/PaymentSuccessPage';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-const UNVERIFIED_LOGIN_MESSAGE = 'Tài khoản chưa được xác thực. Vui lòng nhập mã đã gửi về email của bạn.';
 
-interface PendingAdd {
-  product: Product;
-  qty: number;
-  buyNow: boolean;
-}
+/** Phí ship hiện hành của app (O1): 25.000đ, miễn phí khi tạm tính (trước giảm) ≥ 299.000đ. */
+const SHIPPING_FEE = 25000;
+const FREE_SHIPPING_THRESHOLD = 299000;
+/** Số sản phẩm mỗi trang danh mục (CN-04). */
+const CATALOG_PAGE_SIZE = 12;
+/** Số đơn mỗi trang ở trang Đơn hàng. */
+const ORDERS_PAGE_SIZE = 10;
 
-interface RegisterVerificationResult {
-  email: string;
-  requiresVerification: boolean;
-}
+/** Đọc giỏ khách (localStorage) — giỏ của khách chưa đăng nhập (CN-06.1). */
+const readGuestCart = (): CartItem[] => {
+  try {
+    const raw = window.localStorage.getItem(GUEST_CART_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((i: any) => i && i.product && typeof i.product.id === 'string')
+      .map((i: any) => ({
+        product: i.product as Product,
+        quantity: Math.max(1, Number(i.quantity) || 1),
+      }));
+  } catch {
+    return [];
+  }
+};
+
+const clearGuestCartStorage = () => {
+  try {
+    window.localStorage.removeItem(GUEST_CART_STORAGE_KEY);
+  } catch {
+    /* bỏ qua */
+  }
+};
+
+/** Map giỏ server (CartDto của BE) sang CartItem của FE, giữ cờ giá thay đổi từ lần đồng bộ trước. */
+const mapServerCart = (dto: ServerCartDto, prev: CartItem[]): CartItem[] =>
+  (dto.items || []).map(si => {
+    const prevItem = prev.find(p => p.product.id === si.productId);
+    let priceChanged = false;
+    let previousPrice: number | undefined;
+    if (prevItem) {
+      if (prevItem.priceChanged) {
+        priceChanged = true;
+        previousPrice = prevItem.previousPrice;
+      } else if (prevItem.product.price !== si.unitPrice) {
+        priceChanged = true;
+        previousPrice = prevItem.product.price;
+      }
+    }
+    return {
+      product: {
+        id: si.productId,
+        categoryId: prevItem?.product.categoryId || '',
+        categoryName: prevItem?.product.categoryName || '',
+        name: si.productName,
+        slug: prevItem?.product.slug || '',
+        description: prevItem?.product.description || '',
+        price: si.unitPrice,
+        originalPrice: prevItem?.product.originalPrice,
+        availableStock: si.availableStock,
+        imageUrl: si.productImageUrl || prevItem?.product.imageUrl || '',
+        rating: prevItem?.product.rating,
+        reviewCount: prevItem?.product.reviewCount,
+      },
+      quantity: si.quantity,
+      serverItemId: si.id,
+      isAvailable: si.isAvailable,
+      priceChanged,
+      previousPrice,
+    };
+  });
 
 export default function App() {
   const navigate = useNavigate();
@@ -63,46 +130,36 @@ export default function App() {
   const matchedPaymentOrderCode = paymentMatch?.params?.orderCode;
 
   const lastLoadedProductIdRef = useRef<string | null>(null);
+  const pathnameRef = useRef(location.pathname);
+  useEffect(() => {
+    pathnameRef.current = location.pathname;
+  }, [location.pathname]);
 
-  // Navigation & Catalogs
+  // Navigation & Catalog (CN-04: phân trang server 12/trang + sort + khoảng giá)
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [homePriceRange, setHomePriceRange] = useState<'all' | 'under-500' | '500-2000' | 'over-2000'>('all');
-  const [homeInStockOnly, setHomeInStockOnly] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sortOrder, setSortOrder] = useState<'newest' | 'price-asc' | 'price-desc'>('newest');
+  const [priceFromText, setPriceFromText] = useState('');
+  const [priceToText, setPriceToText] = useState('');
+  const [priceRange, setPriceRange] = useState<{ from: number | null; to: number | null }>({ from: null, to: null });
+  const [priceFilterError, setPriceFilterError] = useState<string | null>(null);
+  const [catalogPage, setCatalogPage] = useState(1);
+  const [catalogHasNext, setCatalogHasNext] = useState(false);
+  const [catalogKnownTotal, setCatalogKnownTotal] = useState<number | null>(null);
+  const catalogRequestSeq = useRef(0);
 
-  // Lazy Loading / Infinite Scroll on Products
-  const [visibleCount, setVisibleCount] = useState(16);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
-
-  // Home sidebar filters (price range / in-stock) — single predicate shared by
-  // the rendered grid and the lazy-loading logic so both count the same list.
-  const matchesHomeFilters = (product: Product) => {
-    if (homeInStockOnly && product.availableStock <= 0) return false;
-    if (homePriceRange === 'under-500') return product.price < 500000;
-    if (homePriceRange === '500-2000') return product.price >= 500000 && product.price <= 2000000;
-    if (homePriceRange === 'over-2000') return product.price > 2000000;
-    return true;
-  };
-  const filteredProductCount = products.filter(matchesHomeFilters).length;
-
-  // Product Detail Modal State
+  // Product Detail State
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
   const [productDetailLoading, setProductDetailLoading] = useState(false);
+  const [productNotFound, setProductNotFound] = useState(false);
   const [detailQuantity, setDetailQuantity] = useState(1);
-  const [modalTab, setModalTab] = useState<'description' | 'reviews'>('description');
-  const [reviewRating, setReviewRating] = useState(5);
-  const [reviewAuthor, setReviewAuthor] = useState('');
-  const [reviewComment, setReviewComment] = useState('');
-  const [submittingReview, setSubmittingReview] = useState(false);
 
-  // Cart State
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [isCartOpen, setIsCartOpen] = useState(false);
+  // Cart State — giỏ hiển thị: khách = localStorage, đã đăng nhập = giỏ server (CN-06)
+  const [cart, setCart] = useState<CartItem[]>(() => readGuestCart());
 
   // Voucher State
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
@@ -117,6 +174,11 @@ export default function App() {
   const [shippingAddress, setShippingAddress] = useState('');
   const [checkoutResult, setCheckoutResult] = useState<CheckoutResult | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [showPriceChangedNotice, setShowPriceChangedNotice] = useState(false);
+  const [ackedPriceSignature, setAckedPriceSignature] = useState('');
+  const [lastOrderAddress, setLastOrderAddress] = useState('');
+  const checkoutIdemKeyRef = useRef<string | null>(null);
   const [orderStatus, setOrderStatus] = useState<string>('Pending');
   const [timeLeft, setTimeLeft] = useState<number>(15 * 60);
 
@@ -127,20 +189,50 @@ export default function App() {
     totalAmount: number;
   } | null>(null);
 
-  // Orders Filter State
-  const [orderFilter, setOrderFilter] = useState<'all' | 'Pending' | 'Paid' | 'Shipping' | 'Completed' | 'Cancelled'>('all');
+  // Orders State (CN-08: list phân trang + lọc theo StatusLabel + chi tiết + hủy)
+  const [orderHistory, setOrderHistory] = useState<OrderHistory[]>([]);
+  const [orderHistoryLoading, setOrderHistoryLoading] = useState(false);
+  const [ordersList, setOrdersList] = useState<OrderHistory[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersPageNum, setOrdersPageNum] = useState(1);
+  const [ordersHasNext, setOrdersHasNext] = useState(false);
+  const [orderStatusFilter, setOrderStatusFilter] = useState('');
+  const [selectedOrder, setSelectedOrder] = useState<OrderHistory | null>(null);
+  const [orderDetailLoading, setOrderDetailLoading] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<OrderHistory | null>(null);
+  const [cancelReasonChoice, setCancelReasonChoice] = useState('Đổi ý, không muốn mua nữa');
+  const [cancelReasonText, setCancelReasonText] = useState('');
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelSuccessCode, setCancelSuccessCode] = useState<string | null>(null);
+  const ordersRequestSeq = useRef(0);
 
-  // Profile & Address Configuration State
+  // Profile State (CN-03)
   const [profileFullName, setProfileFullName] = useState('');
   const [profilePhone, setProfilePhone] = useState('');
   const [profileEmail, setProfileEmail] = useState('');
-  const [profileAddress, setProfileAddress] = useState('');
-  const [profileNotes, setProfileNotes] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
+  const [profileNameError, setProfileNameError] = useState<string | null>(null);
+  const [profilePhoneError, setProfilePhoneError] = useState<string | null>(null);
+  const [profileSuccess, setProfileSuccess] = useState(false);
 
-  // Auth State
+  // Đổi mật khẩu (CN-03.2)
+  const [cpCurrent, setCpCurrent] = useState('');
+  const [cpNew, setCpNew] = useState('');
+  const [cpConfirm, setCpConfirm] = useState('');
+  const [cpErrors, setCpErrors] = useState<{ current?: string; next?: string; confirm?: string }>({});
+  const [cpSuccess, setCpSuccess] = useState(false);
+  const [cpBusy, setCpBusy] = useState(false);
+
+  // Đặt mật khẩu cho tài khoản social (CN-03) — chỉ khi tài khoản chưa có mật khẩu
+  const [setPasswordValue, setSetPasswordValue] = useState('');
+  const [setPasswordConfirm, setSetPasswordConfirm] = useState('');
+  const [setPasswordError, setSetPasswordError] = useState<string | null>(null);
+  const [setPasswordDone, setSetPasswordDone] = useState(false);
+  const [settingPassword, setSettingPassword] = useState(false);
+
+  // Auth State (JWT — CN-02)
   const [user, setUser] = useState<User | null>(null);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -149,16 +241,13 @@ export default function App() {
   const [registerPassword, setRegisterPassword] = useState('');
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
   const [registerPhone, setRegisterPhone] = useState('');
-  const [registerAddress, setRegisterAddress] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(null);
-  const [authGateNotice, setAuthGateNotice] = useState(false);
-  const [verificationEmail, setVerificationEmail] = useState('');
-  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
   const [loginEmailError, setLoginEmailError] = useState<string | null>(null);
   const [loginPasswordError, setLoginPasswordError] = useState<string | null>(null);
-  const [loginFailureCount, setLoginFailureCount] = useState(0);
+  const [registerFieldErrors, setRegisterFieldErrors] = useState<RegisterFieldErrors>({});
+  const [registerSuccess, setRegisterSuccess] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   // User Account Dropdown Toggle State
   const [isAccountDropdownOpen, setIsAccountDropdownOpen] = useState(false);
@@ -193,45 +282,90 @@ export default function App() {
     setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
   };
 
-  // Profile & Order History Drawer
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [orderHistory, setOrderHistory] = useState<OrderHistory[]>([]);
-  const [orderHistoryLoading, setOrderHistoryLoading] = useState(false);
-
   // Notifications State & SignalR
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
-  const [toastAlert, setToastAlert] = useState<{ title: string; message: string; type: string } | null>(null);
+  const [toastAlert, setToastAlert] = useState<{ title: string; message: string; type: string; testId?: string } | null>(null);
   const signalRConnection = useRef<signalR.HubConnection | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToast = useCallback((title: string, message: string, type: string, testId?: string) => {
+    setToastAlert({ title, message, type, testId });
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastAlert(null);
+    }, 5000);
+  }, []);
 
   // Sync profile form when user session updates
   useEffect(() => {
     if (user) {
       setProfileFullName(user.fullName);
       if (user.phoneNumber) setProfilePhone(user.phoneNumber);
-      if (user.address) setProfileAddress(user.address);
       if (user.email) setProfileEmail(user.email);
     } else {
       setProfileFullName('');
       setProfilePhone('');
-      setProfileAddress('');
       setProfileEmail('');
-      setProfileNotes('');
     }
   }, [user]);
 
-  // 1. Initial Load: Categories, Products, Vouchers, User Session, Notifications, Orders
+  // Giỏ khách: persist xuống localStorage mỗi khi giỏ hiển thị thay đổi trong lúc chưa đăng nhập.
+  useEffect(() => {
+    if (!authInitialized || user) return;
+    try {
+      window.localStorage.setItem(GUEST_CART_STORAGE_KEY, JSON.stringify(cart));
+    } catch {
+      /* bỏ qua */
+    }
+  }, [cart, user, authInitialized]);
+
+  // 401 handler (CN-02 E3): phiên hết hạn → đăng xuất cục bộ + về màn hình đăng nhập kèm thông báo.
+  useEffect(() => {
+    setSessionExpiredHandler(() => {
+      setUser(null);
+      setCart(readGuestCart());
+      setSessionExpired(true);
+      const path = pathnameRef.current;
+      if (path.startsWith('/cart') || path.startsWith('/orders') || path.startsWith('/profile') || path.startsWith('/payment')) {
+        sessionStorage.setItem('dafl_return_route', path);
+      }
+      navigate('/login');
+    });
+    return () => setSessionExpiredHandler(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 1. Initial Load: Categories, Vouchers, User Session (JWT)
   useEffect(() => {
     fetchCategories();
     fetchVouchers();
     fetchUserSession();
-    fetchOrderHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Thông báo phụ thuộc người dùng: tải lại khi đăng nhập/đăng xuất để không lẫn thông báo của người khác
+  // Thông báo phụ thuộc người dùng: tải lại khi đăng nhập/đăng xuất
   useEffect(() => {
     fetchNotifications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Đơn hàng: tải lại trang danh sách khi đổi người dùng / bộ lọc / trang
+  useEffect(() => {
+    if (user) {
+      fetchOrdersPage(ordersPageNum, orderStatusFilter);
+      fetchOrderHistory();
+    } else {
+      setOrdersList([]);
+      setSelectedOrder(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, ordersPageNum, orderStatusFilter]);
+
+  useEffect(() => {
+    setOrdersPageNum(1);
+    setCancelSuccessCode(null);
+  }, [orderStatusFilter]);
 
   // Debounce search query with 350ms delay
   useEffect(() => {
@@ -241,71 +375,58 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  // Debounce khoảng giá: from > to → lỗi price-filter-error và KHÔNG áp dụng lọc (CN-04.2)
   useEffect(() => {
-    fetchProducts(selectedCategory, debouncedSearch);
-  }, [selectedCategory, debouncedSearch]);
+    const timer = setTimeout(() => {
+      const from = priceFromText.trim() === '' ? null : Number(priceFromText.replace(/[^\d]/g, ''));
+      const to = priceToText.trim() === '' ? null : Number(priceToText.replace(/[^\d]/g, ''));
+      if (from !== null && to !== null && from > to) {
+        setPriceFilterError('Giá bắt đầu không được lớn hơn giá đến.');
+        return;
+      }
+      setPriceFilterError(null);
+      // Chỉ đổi state khi giá trị thật sự khác — tránh reset phân trang oan lúc mount.
+      setPriceRange(prev => (prev.from === from && prev.to === to ? prev : { from, to }));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [priceFromText, priceToText]);
 
-  // Sidebar filters are client-side only: restart lazy loading from page one,
-  // mirroring the visibleCount reset fetchProducts does for category/search.
+  // Đổi bộ lọc → quay về trang 1
   useEffect(() => {
-    setVisibleCount(16);
-  }, [homePriceRange, homeInStockOnly]);
+    setCatalogPage(1);
+  }, [selectedCategory, debouncedSearch, sortOrder, priceRange]);
 
-  // Scroll-based lazy loading with IntersectionObserver
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return;
-    if (visibleCount >= filteredProductCount) return;
+    fetchProductsPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCategory, debouncedSearch, sortOrder, priceRange, catalogPage]);
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0] && entries[0].isIntersecting && !isLoadingMore) {
-          setIsLoadingMore(true);
-          setTimeout(() => {
-            setVisibleCount(prev => Math.min(prev + 16, filteredProductCount));
-            setIsLoadingMore(false);
-          }, 300);
-        }
-      },
-      { rootMargin: '150px', threshold: 0.1 }
-    );
+  // Vào trang giỏ: đồng bộ lại giỏ (server nếu đã đăng nhập, giá/tồn mới nếu là khách)
+  // + chuẩn bị Idempotency-Key cho phiên checkout (CN-07 E5).
+  useEffect(() => {
+    if (location.pathname !== '/cart') return;
+    if (!checkoutIdemKeyRef.current) {
+      checkoutIdemKeyRef.current = newIdempotencyKey();
+    }
+    if (user) {
+      loadServerCart();
+    } else if (authInitialized) {
+      syncGuestCartFromServer();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, user?.id]);
 
-    const el = loadMoreSentinelRef.current;
-    if (el) observer.observe(el);
-
-    return () => {
-      if (el) observer.unobserve(el);
-      observer.disconnect();
-    };
-  }, [visibleCount, filteredProductCount, isLoadingMore]);
-
-  const handleLoadMore = () => {
-    if (visibleCount >= filteredProductCount || isLoadingMore) return;
-    setIsLoadingMore(true);
-    setTimeout(() => {
-      setVisibleCount(prev => Math.min(prev + 16, filteredProductCount));
-      setIsLoadingMore(false);
-    }, 250);
-  };
-
-  // 2. Setup SignalR Real-time WebSocket connection
+  // 2. Setup SignalR Real-time WebSocket connection (JWT qua accessTokenFactory)
   useEffect(() => {
     const hubUrl = `${API_BASE || 'http://localhost:5000'}/hubs/notifications`;
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(hubUrl, {
-        withCredentials: true,
+        accessTokenFactory: () => getToken() || '',
         transport: signalR.HttpTransportType.WebSockets | signalR.HttpTransportType.LongPolling
       })
       .withAutomaticReconnect()
       .configureLogging(signalR.LogLevel.Warning)
       .build();
-
-    // Tham gia nhóm thông báo riêng bằng session hợp lệ; mất khi kết nối lại nên phải gọi lại
-    const joinUserGroup = () => {
-      if (!user?.sessionId) return;
-      connection.invoke('JoinUserGroup', user.sessionId)
-        .catch(err => console.warn('[SignalR] JoinUserGroup failed:', err));
-    };
-    connection.onreconnected(joinUserGroup);
 
     connection.on('ReceiveNotification', (notif: any) => {
       const newNotif: NotificationItem = {
@@ -323,23 +444,19 @@ export default function App() {
     connection.on('ReceiveOrderStatusUpdate', (code: number, status: string, message: string) => {
       if (checkoutResult && checkoutResult.orderCode === code) {
         setOrderStatus(status);
-        if (status === 'Paid') setCart([]);
       }
       if (embeddedPaymentModal && embeddedPaymentModal.orderCode === code && status === 'Paid') {
         setEmbeddedPaymentModal(null);
       }
-      // Chỉ hiện toast cho đơn hàng đang theo dõi trên màn hình này (sự kiện được phát cho mọi client)
       if (checkoutResult?.orderCode === code || embeddedPaymentModal?.orderCode === code) {
         showToast(`Đơn hàng #${code} cập nhật`, message, 'Order');
       }
-      fetchOrderHistory();
+      if (user) fetchOrderHistory();
     });
 
     connection.start()
       .then(() => {
-        console.log('[SignalR] Connected successfully to NotificationHub');
         signalRConnection.current = connection;
-        joinUserGroup();
       })
       .catch(err => {
         console.warn('[SignalR] NotificationHub not reachable, continuing in local mode:', err);
@@ -348,7 +465,8 @@ export default function App() {
     return () => {
       connection.stop();
     };
-  }, [checkoutResult, embeddedPaymentModal, user?.sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkoutResult, embeddedPaymentModal, user?.id]);
 
   // 3. Timer countdown for PayOS stock reservation
   useEffect(() => {
@@ -375,7 +493,6 @@ export default function App() {
         const json: ApiResponse<any> = await res.json();
         if (json.success && json.data.status === 'Paid') {
           setOrderStatus('Paid');
-          setCart([]);
           fetchOrderHistory();
           clearInterval(pollInterval);
         }
@@ -384,14 +501,8 @@ export default function App() {
       }
     }, 3000);
     return () => clearInterval(pollInterval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkoutResult, orderStatus]);
-
-  const showToast = (title: string, message: string, type: string) => {
-    setToastAlert({ title, message, type });
-    setTimeout(() => {
-      setToastAlert(null);
-    }, 5000);
-  };
 
   // ------------------------------------------
   // Data Fetching Helpers
@@ -424,52 +535,96 @@ export default function App() {
     }
   };
 
-  const fetchProducts = async (catId: string | null, search: string) => {
+  /** Danh mục CN-04: phân trang server 12/trang (xin 13 để thăm dò trang sau), giữ bộ lọc khi chuyển trang. */
+  const fetchProductsPage = async () => {
+    const seq = ++catalogRequestSeq.current;
     setLoading(true);
-    setVisibleCount(16);
     try {
       const params = new URLSearchParams();
-      if (catId) params.append('categoryId', catId);
-      if (search) params.append('search', search);
+      params.append('page', String(catalogPage));
+      params.append('pageSize', String(CATALOG_PAGE_SIZE + 1));
+      if (selectedCategory) params.append('categoryId', selectedCategory);
+      if (debouncedSearch) params.append('search', debouncedSearch);
+      if (priceRange.from !== null) params.append('priceFrom', String(priceRange.from));
+      if (priceRange.to !== null) params.append('priceTo', String(priceRange.to));
+      if (sortOrder !== 'newest') params.append('sort', sortOrder);
 
       const res = await fetch(`${API_BASE}/api/products?${params.toString()}`);
       const json: ApiResponse<Product[]> = await res.json();
-      if (json.success && json.data && json.data.length > 0) {
-        setProducts(json.data);
+      if (seq !== catalogRequestSeq.current) return;
+      if (json.success && Array.isArray(json.data)) {
+        setCatalogHasNext(json.data.length > CATALOG_PAGE_SIZE);
+        setProducts(json.data.slice(0, CATALOG_PAGE_SIZE));
+        setCatalogKnownTotal(null);
       } else {
-        applyFallbackFilter(catId, search);
+        applyFallbackCatalog();
       }
     } catch {
-      applyFallbackFilter(catId, search);
+      if (seq !== catalogRequestSeq.current) return;
+      applyFallbackCatalog();
     } finally {
-      setLoading(false);
+      if (seq === catalogRequestSeq.current) setLoading(false);
     }
   };
 
-  const applyFallbackFilter = (catId: string | null, search: string) => {
+  /** Chế độ offline: lọc + phân trang client trên dữ liệu dự phòng để trang vẫn dùng được. */
+  const applyFallbackCatalog = () => {
     let filtered = [...FALLBACK_PRODUCTS];
-    if (catId) filtered = filtered.filter(p => p.categoryId === catId);
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    if (selectedCategory) filtered = filtered.filter(p => p.categoryId === selectedCategory);
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.toLowerCase();
       filtered = filtered.filter(p => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
     }
-    setProducts(filtered);
-    setVisibleCount(16);
+    if (priceRange.from !== null) filtered = filtered.filter(p => p.price >= (priceRange.from as number));
+    if (priceRange.to !== null) filtered = filtered.filter(p => p.price <= (priceRange.to as number));
+    if (sortOrder === 'price-asc') filtered.sort((a, b) => a.price - b.price);
+    if (sortOrder === 'price-desc') filtered.sort((a, b) => b.price - a.price);
+    setCatalogKnownTotal(filtered.length);
+    setCatalogHasNext(catalogPage * CATALOG_PAGE_SIZE < filtered.length);
+    const start = (catalogPage - 1) * CATALOG_PAGE_SIZE;
+    setProducts(filtered.slice(start, start + CATALOG_PAGE_SIZE));
   };
 
+  const clearCatalogFilters = () => {
+    setSearchQuery('');
+    setSelectedCategory(null);
+    setPriceFromText('');
+    setPriceToText('');
+    setPriceFilterError(null);
+    setPriceRange({ from: null, to: null });
+    setSortOrder('newest');
+    setCatalogPage(1);
+  };
+
+  const applyAuthenticatedUser = (authUser: User) => {
+    setUser(authUser);
+    setCustomerName(authUser.fullName);
+    setCustomerEmail(authUser.email);
+    if (authUser.phoneNumber) setCustomerPhone(authUser.phoneNumber);
+    if (authUser.address) setShippingAddress(authUser.address);
+  };
+
+  /** Khôi phục phiên từ JWT đã lưu: /me trả data=null khi token hết hạn/không hợp lệ → coi như hết phiên (E3). */
   const fetchUserSession = async () => {
+    const token = getToken();
+    if (!token) {
+      setAuthInitialized(true);
+      return;
+    }
     try {
-      const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
-      const json: ApiResponse<User> = await res.json();
-      if (json.success && json.data) {
-        setUser(json.data);
-        setCustomerName(json.data.fullName);
-        setCustomerEmail(json.data.email);
-        if (json.data.phoneNumber) setCustomerPhone(json.data.phoneNumber);
-        if (json.data.address) setShippingAddress(json.data.address);
+      const { body } = await apiJson<User>('/api/auth/me', { skipAuthHandler: true });
+      if (body?.success && body.data) {
+        applyAuthenticatedUser(body.data);
+        await loadServerCart();
+      } else if (body) {
+        // Server phản hồi nhưng không còn phiên → token hết hạn.
+        clearToken();
+        setSessionExpired(true);
       }
-    } catch (err) {
-      console.warn('Auth check offline:', err);
+      // body null (không parse được) → giữ token, thử lại ở lần tải sau.
+    } catch {
+      // Mất mạng: giữ token trong máy, không kết luận hết phiên.
+      console.warn('Auth check offline');
     } finally {
       setAuthInitialized(true);
     }
@@ -491,7 +646,7 @@ export default function App() {
   };
 
   // ------------------------------------------
-  // Product Detail & Review Operations
+  // Product Detail (CN-05)
   // ------------------------------------------
   const loadProductDetailById = async (productId: string) => {
     if (lastLoadedProductIdRef.current === productId && selectedProduct?.id === productId) {
@@ -500,50 +655,27 @@ export default function App() {
     lastLoadedProductIdRef.current = productId;
     setDetailQuantity(1);
     setProductDetailLoading(true);
+    setProductNotFound(false);
     if (selectedProduct?.id !== productId) {
       setSelectedProduct(null);
     }
-    setModalTab('description');
-    setReviewAuthor(user?.fullName || '');
     try {
       const res = await fetch(`${API_BASE}/api/products/${productId}`);
       const json: ApiResponse<ProductDetail> = await res.json();
-      if (json.success && json.data) {
-        setSelectedProduct(json.data);
+      if (json.success && json.data && typeof json.data === 'object' && 'id' in json.data) {
+        setSelectedProduct({ ...json.data, evaluations: json.data.evaluations || [] });
       } else {
-        const found = (products.length ? products : FALLBACK_PRODUCTS).find(p => p.id === productId);
-        if (found) {
-          setSelectedProduct({
-            ...found,
-            evaluations: [
-              {
-                id: 'eval-1',
-                productId: found.id,
-                userName: 'Trần Hoàng Nam',
-                rating: 5,
-                comment: 'Sản phẩm hoàn thiện rất cao cấp, dùng thực tế ưng ý hơn hình ảnh chụp!',
-                createdAt: new Date(Date.now() - 86400000).toISOString()
-              }
-            ]
-          });
-        }
+        // BE trả success=false cho sản phẩm không tồn tại/ngừng bán → trang 404 (CN-05.3).
+        setSelectedProduct(null);
+        setProductNotFound(true);
       }
     } catch {
       const found = (products.length ? products : FALLBACK_PRODUCTS).find(p => p.id === productId);
       if (found) {
-        setSelectedProduct({
-          ...found,
-          evaluations: [
-            {
-              id: 'eval-1',
-              productId: found.id,
-              userName: 'Khách hàng DAFL',
-              rating: 5,
-              comment: 'Sản phẩm chất lượng cao, đóng gói cẩn thận và giao nhanh.',
-              createdAt: new Date().toISOString()
-            }
-          ]
-        });
+        setSelectedProduct({ ...found, evaluations: [] });
+      } else {
+        setSelectedProduct(null);
+        setProductNotFound(true);
       }
     } finally {
       setProductDetailLoading(false);
@@ -554,134 +686,182 @@ export default function App() {
     navigateTo('product', product.id);
   };
 
-  const handleAddReview = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedProduct || !reviewComment.trim()) return;
-
-    setSubmittingReview(true);
-    const author = reviewAuthor.trim() || user?.fullName || 'Khách hàng DAFL';
-
-    try {
-      const res = await fetch(`${API_BASE}/api/products/${selectedProduct.id}/evaluations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          productId: selectedProduct.id,
-          userId: user?.id,
-          userName: author,
-          rating: reviewRating,
-          comment: reviewComment.trim()
-        })
-      });
-
-      const json: ApiResponse<Evaluation> = await res.json();
-      const newReview: Evaluation = json.success && json.data ? json.data : {
-        id: 'eval-' + Date.now(),
-        productId: selectedProduct.id,
-        userName: author,
-        rating: reviewRating,
-        comment: reviewComment.trim(),
-        createdAt: new Date().toISOString()
-      };
-
-      setSelectedProduct(prev => prev ? ({
-        ...prev,
-        evaluations: [newReview, ...prev.evaluations],
-        reviewCount: (prev.reviewCount || 0) + 1
-      }) : null);
-
-      setReviewComment('');
-      showToast('Đánh giá sản phẩm', 'Cảm ơn bạn đã gửi đánh giá cho sản phẩm!', 'System');
-    } catch (err) {
-      console.warn('API review offline, updating locally:', err);
-      const mockEval: Evaluation = {
-        id: 'eval-' + Date.now(),
-        productId: selectedProduct.id,
-        userName: author,
-        rating: reviewRating,
-        comment: reviewComment.trim(),
-        createdAt: new Date().toISOString()
-      };
-      setSelectedProduct(prev => prev ? ({
-        ...prev,
-        evaluations: [mockEval, ...prev.evaluations],
-        reviewCount: (prev.reviewCount || 0) + 1
-      }) : null);
-      setReviewComment('');
-    } finally {
-      setSubmittingReview(false);
+  // ------------------------------------------
+  // Cart Operations (CN-06: hai tầng khách/server)
+  // ------------------------------------------
+  const applyServerCart = useCallback((dto: ServerCartDto) => {
+    setCart(prev => mapServerCart(dto, prev));
+    if (dto.notice) {
+      showToast('Số lượng đã được điều chỉnh', dto.notice, 'System');
     }
+  }, [showToast]);
+
+  const loadServerCart = useCallback(async () => {
+    try {
+      const { body } = await apiJson<ServerCartDto>('/api/cart');
+      if (body?.success && body.data) {
+        setCart(prev => mapServerCart(body.data as ServerCartDto, prev));
+      }
+    } catch {
+      /* offline: giữ giỏ đang hiển thị */
+    }
+  }, []);
+
+  /** Khách mở giỏ: đồng bộ giá/tồn mới nhất từ chi tiết sản phẩm; 404 → đánh dấu ngừng bán. */
+  const syncGuestCartFromServer = async () => {
+    const current = readGuestCart();
+    if (current.length === 0) return;
+    const synced = await Promise.all(current.map(async item => {
+      try {
+        const res = await fetch(`${API_BASE}/api/products/${item.product.id}`);
+        const json: ApiResponse<ProductDetail> = await res.json();
+        if (json.success && json.data && typeof json.data === 'object' && 'id' in json.data) {
+          const fresh = json.data;
+          const priceChanged = fresh.price !== item.product.price;
+          return {
+            ...item,
+            product: { ...item.product, price: fresh.price, availableStock: fresh.availableStock, imageUrl: fresh.imageUrl || item.product.imageUrl, name: fresh.name },
+            isAvailable: fresh.availableStock > 0 ? item.isAvailable : false,
+            priceChanged: priceChanged || item.priceChanged,
+            previousPrice: priceChanged ? item.product.price : item.previousPrice,
+          } as CartItem;
+        }
+        return { ...item, isAvailable: false };
+      } catch {
+        return item;
+      }
+    }));
+    setCart(synced);
   };
 
-  // ------------------------------------------
-  // Cart & Voucher Operations
-  // ------------------------------------------
-  const openAuthGate = (pending?: PendingAdd) => {
-    if (pending) setPendingAdd(pending);
-    setAuthGateNotice(true);
-    setAuthTab('login');
-    setAuthError(null);
-    setIsAuthModalOpen(true);
+  const toastAddedToCart = (product: Product) => {
+    showToast('Đã thêm vào giỏ hàng', `Đã thêm ${product.name} vào giỏ hàng.`, 'Cart', 'cart-added-toast');
   };
 
-  const mergeProductIntoCart = (product: Product, qty: number) => {
+  /** Thêm vào giỏ của khách (localStorage): cộng dồn + kẹp theo tồn kho (CN-06.2). */
+  const addToGuestCart = (product: Product, qty: number) => {
+    const stock = product.availableStock;
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {
+        const requested = existing.quantity + qty;
+        const clamped = typeof stock === 'number' && stock >= 0 ? Math.min(requested, stock) : requested;
+        if (clamped < requested) {
+          showToast('Số lượng đã được điều chỉnh', `Chỉ còn ${stock} sản phẩm.`, 'System');
+        }
         return prev.map(item =>
-          item.product.id === product.id ? { ...item, quantity: item.quantity + qty } : item
+          item.product.id === product.id ? { ...item, quantity: Math.max(1, clamped) } : item
         );
       }
-      return [...prev, { product, quantity: qty }];
+      const initialQty = typeof stock === 'number' && stock > 0 ? Math.min(qty, stock) : qty;
+      if (initialQty < qty) {
+        showToast('Số lượng đã được điều chỉnh', `Chỉ còn ${stock} sản phẩm.`, 'System');
+      }
+      return [...prev, { product, quantity: Math.max(1, initialQty) }];
     });
+    toastAddedToCart(product);
   };
 
-  const executePendingAdd = (pending: PendingAdd) => {
+  const addToCart = async (product: Product, qty: number = 1) => {
     setCheckoutResult(null);
     setOrderStatus('Pending');
-    if (pending.buyNow) {
-      setCart([{ product: pending.product, quantity: pending.qty }]);
-      setSelectedProduct(null);
-    } else {
-      mergeProductIntoCart(pending.product, pending.qty);
-    }
-    navigateTo('cart');
-    showToast('Đã thêm vào giỏ', `Đã thêm ${pending.product.name} vào giỏ hàng.`, 'System');
-  };
-
-  const addToCart = (product: Product, qty: number = 1) => {
     if (!user) {
-      openAuthGate({ product, qty, buyNow: false });
+      // CN-06.2: KHÔNG còn cổng đăng nhập — ai cũng thêm giỏ được.
+      addToGuestCart(product, qty);
       return;
     }
+    try {
+      const { body } = await apiJson<ServerCartDto>('/api/cart/items', {
+        method: 'POST',
+        body: JSON.stringify({ productId: product.id, quantity: qty }),
+      });
+      if (body?.success && body.data) {
+        applyServerCart(body.data);
+        if (!body.data.notice) toastAddedToCart(product);
+      } else if (body) {
+        showToast('Không thêm được vào giỏ', body.message || 'Vui lòng thử lại.', 'System');
+      } else {
+        addToGuestCart(product, qty);
+      }
+    } catch {
+      showToast('Không thêm được vào giỏ', 'Không thể kết nối đến máy chủ. Vui lòng thử lại.', 'System');
+    }
+  };
+
+  /** Mua ngay (CN-05.2): thêm vào giỏ rồi chuyển thẳng sang trang giỏ/checkout. */
+  const handleBuyNow = async (product: Product, qty: number = 1) => {
     setCheckoutResult(null);
     setOrderStatus('Pending');
-    mergeProductIntoCart(product, qty);
+    if (!user) {
+      addToGuestCart(product, qty);
+      // CN-07 bước 1: chưa đăng nhập → qua đăng nhập rồi quay lại /cart để thanh toán (E4).
+      sessionStorage.setItem('dafl_return_route', '/cart');
+      navigate('/login');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    await addToCart(product, qty);
     navigateTo('cart');
   };
 
-  const handleBuyNow = (product: Product, qty: number = 1) => {
+  const setCartQuantity = async (productId: string, nextQty: number) => {
+    const item = cart.find(entry => entry.product.id === productId);
+    if (!item || nextQty < 1) return;
     if (!user) {
-      openAuthGate({ product, qty, buyNow: true });
+      const stock = item.product.availableStock;
+      const clamped = typeof stock === 'number' && stock >= 0 ? Math.min(nextQty, stock) : nextQty;
+      if (clamped < nextQty) {
+        showToast('Số lượng đã được điều chỉnh', `Chỉ còn ${stock} sản phẩm.`, 'System');
+      }
+      setCart(prev => prev.map(entry =>
+        entry.product.id === productId ? { ...entry, quantity: Math.max(1, clamped) } : entry
+      ));
       return;
     }
-    setCheckoutResult(null);
-    setOrderStatus('Pending');
-    setCart([{ product, quantity: qty }]);
-    setSelectedProduct(null);
-    navigateTo('cart');
+    if (!item.serverItemId) return;
+    try {
+      const { body } = await apiJson<ServerCartDto>(`/api/cart/items/${item.serverItemId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ quantity: nextQty }),
+      });
+      if (body?.success && body.data) applyServerCart(body.data);
+      else if (body) showToast('Không cập nhật được giỏ', body.message || 'Vui lòng thử lại.', 'System');
+    } catch {
+      showToast('Không cập nhật được giỏ', 'Không thể kết nối đến máy chủ.', 'System');
+    }
   };
 
   const updateQuantity = (productId: string, delta: number) => {
-    setCart(prev => prev
-      .map(item => item.product.id === productId ? { ...item, quantity: item.quantity + delta } : item)
-      .filter(item => item.quantity > 0)
-    );
+    const item = cart.find(entry => entry.product.id === productId);
+    if (!item) return;
+    void setCartQuantity(productId, item.quantity + delta);
   };
 
-  const rawSubTotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const removeCartItem = async (productId: string) => {
+    const item = cart.find(entry => entry.product.id === productId);
+    if (!item) return;
+    if (!user) {
+      setCart(prev => prev.filter(entry => entry.product.id !== productId));
+      return;
+    }
+    if (!item.serverItemId) return;
+    try {
+      const { body } = await apiJson<ServerCartDto>(`/api/cart/items/${item.serverItemId}`, { method: 'DELETE' });
+      if (body?.success && body.data) applyServerCart(body.data);
+      else if (body) showToast('Không xóa được sản phẩm', body.message || 'Vui lòng thử lại.', 'System');
+    } catch {
+      showToast('Không xóa được sản phẩm', 'Không thể kết nối đến máy chủ.', 'System');
+    }
+  };
+
+  // Tổng tiền chỉ tính các dòng còn đặt được (CN-06.5: dòng ngừng bán bị loại khỏi tổng).
+  const orderableItems = cart.filter(item => item.isAvailable !== false);
+  const rawSubTotal = orderableItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
   const discountAmount = appliedVoucher ? appliedVoucher.discountAmount : 0;
-  const finalTotal = Math.max(0, rawSubTotal - discountAmount);
+  const shippingFeeEstimate = orderableItems.length === 0 || rawSubTotal >= FREE_SHIPPING_THRESHOLD || appliedVoucher?.code === 'FREESHIP'
+    ? 0
+    : SHIPPING_FEE;
+  const finalTotal = Math.max(0, rawSubTotal - discountAmount) + shippingFeeEstimate;
   const totalItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const handleApplyVoucher = async (codeToApply?: string) => {
@@ -702,8 +882,11 @@ export default function App() {
           discountAmount: json.data.discountAmount
         });
         setVoucherMessage(json.data.message);
+      } else if (json && json.message) {
+        // BE từ chối (không tồn tại/hết hạn/chưa đạt tối thiểu...) → hiện nguyên văn, không tự tính ở FE.
+        setAppliedVoucher(null);
+        setVoucherMessage(json.message);
       } else {
-        // Fallback local voucher calculation
         applyLocalVoucher(code);
       }
     } catch {
@@ -737,54 +920,139 @@ export default function App() {
   };
 
   // ------------------------------------------
-  // Checkout & PayOS
+  // Checkout (CN-07)
   // ------------------------------------------
   const handleRequireAuth = () => {
     sessionStorage.setItem('dafl_return_route', '/cart');
     showToast('Yêu cầu đăng nhập', 'Vui lòng đăng nhập tài khoản để tiến hành thanh toán đơn hàng.', 'System');
-    openAuthGate();
+    navigate('/login');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleCheckout = async (e: React.FormEvent) => {
+  const priceChangeSignature = cart
+    .filter(item => item.priceChanged)
+    .map(item => item.product.id)
+    .sort()
+    .join(',');
+
+  const handleCheckout = async (e: React.FormEvent, values?: CheckoutFormValues) => {
     e.preventDefault();
     if (!user) {
       handleRequireAuth();
       return;
     }
-    if (cart.length === 0) return;
-
+    if (orderableItems.length === 0) {
+      setCheckoutError('Giỏ hàng không có sản phẩm khả dụng để đặt hàng.');
+      return;
+    }
+    // CN-07 E2: giá đã thay đổi → thông báo và yêu cầu khách xác nhận lại, không tự đặt.
+    if (priceChangeSignature && priceChangeSignature !== ackedPriceSignature) {
+      setShowPriceChangedNotice(true);
+      setAckedPriceSignature(priceChangeSignature);
+      return;
+    }
+    setShowPriceChangedNotice(false);
+    setCheckoutError(null);
     setIsCheckingOut(true);
     try {
+      if (!checkoutIdemKeyRef.current) {
+        checkoutIdemKeyRef.current = newIdempotencyKey();
+      }
+      const idemKey = checkoutIdemKeyRef.current;
+      const shipping = values?.shipping;
       const payload = {
-        customerName,
-        customerEmail,
-        customerPhone,
-        shippingAddress,
+        customerName: shipping?.recipientName ?? values?.customerName ?? customerName,
+        customerEmail: shipping?.email ?? values?.customerEmail ?? customerEmail,
+        customerPhone: shipping?.phone ?? values?.customerPhone ?? customerPhone,
+        shippingAddress: values?.shippingAddress ?? shippingAddress,
         voucherCode: appliedVoucher?.code,
         userId: user?.id,
-        items: cart.map(item => ({
+        items: orderableItems.map(item => ({
           productId: item.product.id,
           quantity: item.quantity
-        }))
+        })),
+        paymentMethod: values?.paymentMethod ?? 'COD',
+        orderNote: shipping?.note,
+        idempotencyKey: idemKey,
+        // Khối giao hàng có cấu trúc — BE lưu snapshot vào đơn. Mã địa giới gửi dạng STRING theo DTO của BE.
+        ...(shipping
+          ? {
+              shipping: {
+                recipientName: shipping.recipientName,
+                phone: shipping.phone,
+                provinceCode: String(shipping.provinceCode),
+                provinceName: shipping.provinceName,
+                districtCode: String(shipping.districtCode),
+                districtName: shipping.districtName,
+                wardCode: String(shipping.wardCode),
+                wardName: shipping.wardName,
+                detailAddress: shipping.detailAddress,
+                note: shipping.note,
+                addressBookId: shipping.addressBookId,
+              },
+            }
+          : {}),
       };
 
-      const res = await fetch(`${API_BASE}/api/orders/checkout`, {
+      const res = await apiFetch('/api/orders/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Idempotency-Key': idemKey },
         body: JSON.stringify(payload)
       });
 
       const json: ApiResponse<CheckoutResult> = await res.json();
       if (json.success && json.data) {
-        setCheckoutResult(json.data);
+        setCheckoutResult({
+          ...json.data,
+          paymentMethod: json.data.paymentMethod || values?.paymentMethod || 'COD',
+        });
         setOrderStatus('Pending');
         setTimeLeft(15 * 60);
+        setLastOrderAddress(values?.shippingAddress ?? shippingAddress);
+        // Đặt thành công → phiên checkout kết thúc, lần vào sau dùng key mới (E5).
+        checkoutIdemKeyRef.current = null;
+        setAckedPriceSignature('');
+        // BE đã xóa các sản phẩm đã đặt khỏi giỏ server → đồng bộ lại giỏ hiển thị.
+        await loadServerCart();
+        fetchOrderHistory();
+        // Tick "Lưu làm địa chỉ mặc định": lưu vào sổ địa chỉ (field setAsDefault + mã dạng string theo BE).
+        if (shipping?.saveAsDefault) {
+          try {
+            await apiFetch('/api/addresses', {
+              method: 'POST',
+              body: JSON.stringify({
+                recipientName: shipping.recipientName,
+                phone: shipping.phone,
+                provinceCode: String(shipping.provinceCode),
+                provinceName: shipping.provinceName,
+                districtCode: String(shipping.districtCode),
+                districtName: shipping.districtName,
+                wardCode: String(shipping.wardCode),
+                wardName: shipping.wardName,
+                detailAddress: shipping.detailAddress,
+                note: shipping.note,
+                setAsDefault: true,
+              }),
+            });
+          } catch (saveErr) {
+            console.warn('Không lưu được địa chỉ vào sổ địa chỉ:', saveErr);
+          }
+        }
       } else {
-        alert(json.message || 'Không thể tạo đơn hàng.');
+        // Lỗi BE (voucher/hết hàng/giá) → hiện NGUYÊN VĂN thông điệp (CN-07 E1/E2 + Mục 11.2).
+        const message = json.message || 'Không thể tạo đơn hàng.';
+        setCheckoutError(message);
+        if (message.includes('Mã giảm giá')) {
+          setAppliedVoucher(null);
+          setVoucherMessage(message);
+        }
+        if (/tồn kho|ngừng bán|chỉ còn|không đủ/i.test(message)) {
+          await loadServerCart();
+        }
       }
     } catch (err) {
       console.error('API checkout error:', err);
-      alert('Không thể kết nối đến máy chủ thanh toán. Vui lòng kiểm tra kết nối mạng và thử lại sau.');
+      setCheckoutError('Không thể kết nối đến máy chủ thanh toán. Vui lòng kiểm tra kết nối mạng và thử lại sau.');
     } finally {
       setIsCheckingOut(false);
     }
@@ -797,7 +1065,6 @@ export default function App() {
       const json: ApiResponse<any> = await res.json();
       if (json.success && json.data?.status === 'Paid') {
         setOrderStatus('Paid');
-        setCart([]);
         fetchOrderHistory();
         showToast('Thanh toán thành công', `Đơn hàng #${checkoutResult.orderCode} đã xác nhận thanh toán qua PayOS!`, 'Payment');
       } else {
@@ -810,7 +1077,7 @@ export default function App() {
   };
 
   // ------------------------------------------
-  // Auth Operations: Login, Register, Logout
+  // Auth Operations (CN-01, CN-02 — JWT)
   // ------------------------------------------
   const updateLoginEmail = (value: string) => {
     setLoginEmail(value);
@@ -827,39 +1094,53 @@ export default function App() {
     return json.message || fallback;
   };
 
-  const applyAuthenticatedUser = (authUser: User) => {
-    setUser(authUser);
-    setCustomerName(authUser.fullName);
-    setCustomerEmail(authUser.email);
-    if (authUser.phoneNumber) setCustomerPhone(authUser.phoneNumber);
-    if (authUser.address) setShippingAddress(authUser.address);
-  };
-
-  const completeAuthentication = (
-    authUser: User,
-    toastTitle = 'Đăng nhập thành công',
-    toastMessage = `Xin chào mừng trở lại, ${authUser.fullName}!`
-  ) => {
-    const wasModalOpen = isAuthModalOpen;
-    const pending = pendingAdd;
-
-    applyAuthenticatedUser(authUser);
+  const clearAuthErrors = () => {
     setAuthError(null);
     setLoginEmailError(null);
     setLoginPasswordError(null);
-    setLoginFailureCount(0);
-    setVerificationEmail('');
-    setVerificationNotice(null);
-    setAuthGateNotice(false);
-    setIsAuthModalOpen(false);
-    setPendingAdd(null);
+    setRegisterFieldErrors({});
+    setRegisterSuccess(false);
+  };
 
-    if (pending) {
-      executePendingAdd(pending);
-      return;
+  /**
+   * Hoàn tất đăng nhập (mật khẩu/social): lưu JWT, merge giỏ khách vào giỏ server
+   * (CN-06.6) rồi quay lại trang đã lưu (E4) hoặc về trang chủ từ trang auth.
+   */
+  const completeAuthentication = async (
+    auth: AuthResult,
+    toastTitle = 'Đăng nhập thành công',
+    toastMessage?: string
+  ) => {
+    setToken(auth.token);
+    applyAuthenticatedUser(auth.user);
+    clearAuthErrors();
+    setSessionExpired(false);
+    setRegisterSuccess(false);
+
+    const guestItems = readGuestCart();
+    if (guestItems.length > 0) {
+      clearGuestCartStorage();
+      try {
+        const { body } = await apiJson<ServerCartDto>('/api/cart/merge', {
+          method: 'POST',
+          body: JSON.stringify({
+            items: guestItems.map(i => ({ productId: i.product.id, quantity: i.quantity })),
+          }),
+        });
+        if (body?.success && body.data) {
+          applyServerCart(body.data);
+        } else {
+          await loadServerCart();
+        }
+      } catch {
+        await loadServerCart();
+      }
+    } else {
+      await loadServerCart();
     }
 
-    showToast(toastTitle, toastMessage, 'System');
+    fetchOrderHistory();
+    showToast(toastTitle, toastMessage || `Xin chào mừng trở lại, ${auth.user.fullName}!`, 'System');
 
     const returnRoute = sessionStorage.getItem('dafl_return_route');
     if (returnRoute) {
@@ -867,159 +1148,24 @@ export default function App() {
       const clean = returnRoute.replace(/^#\/?/, '').replace(/^\/+/, '');
       const parts = clean.split('/');
       navigateTo((parts[0] || 'home') as AppRoute, parts[1]);
-    } else if (!wasModalOpen) {
+    } else if (pathnameRef.current === '/login' || pathnameRef.current === '/register') {
       navigateTo('home');
     }
   };
 
   const handleAuthClose = () => {
-    setPendingAdd(null);
-    setAuthGateNotice(false);
-    setVerificationEmail('');
-    setVerificationNotice(null);
-    setIsAuthModalOpen(false);
     sessionStorage.removeItem('dafl_return_route');
-    if (location.pathname === '/login' || location.pathname === '/register') {
+    if (pathnameRef.current === '/login' || pathnameRef.current === '/register') {
       navigateTo('home');
     }
   };
 
-  const handleVerifyEmail = async (code: string): Promise<string | null> => {
-    if (!verificationEmail) return 'Không tìm thấy email cần xác thực.';
-    setAuthLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/verify-email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email: verificationEmail, code })
-      });
-      const json: ApiResponse<User> = await res.json();
-      if (json.success && json.data) {
-        completeAuthentication(json.data, 'Xác thực thành công', `Chào mừng ${json.data.fullName} đến với DAFL Store!`);
-        return null;
-      }
-      return getResponseError(json, 'Mã xác nhận không đúng.');
-    } catch {
-      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleResendVerification = async (): Promise<string | null> => {
-    if (!verificationEmail) return 'Không tìm thấy email cần xác thực.';
-    setAuthLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/resend-verification`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email: verificationEmail })
-      });
-      const json: ApiResponse<any> = await res.json();
-      // debugCode (nếu môi trường dev/test trả về) được bỏ qua có chủ đích:
-      // FE không tự điền và không hiển thị mã xác thực.
-      if (json.success) return null;
-      return getResponseError(json, 'Không thể gửi lại mã xác thực.');
-    } catch {
-      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleOtpLoginRequest = async (email: string): Promise<string | null> => {
-    setAuthLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/otp-login/request`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email })
-      });
-      const json: ApiResponse<any> = await res.json();
-      if (json.success) return null;
-      return getResponseError(json, 'Không thể gửi mã OTP.');
-    } catch {
-      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleOtpLoginVerify = async (email: string, code: string): Promise<string | null> => {
-    setAuthLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/otp-login/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email, code })
-      });
-      const json: ApiResponse<User> = await res.json();
-      if (json.success && json.data) {
-        completeAuthentication(json.data);
-        return null;
-      }
-      return getResponseError(json, 'Mã xác nhận không đúng.');
-    } catch {
-      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleForgotPasswordRequest = async (email: string): Promise<string | null> => {
-    setAuthLoading(true);
-    try {
-      await fetch(`${API_BASE}/api/auth/forgot-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email })
-      });
-      // Endpoint luôn trả phản hồi generic để không lộ email có tồn tại hay không.
-      return null;
-    } catch {
-      // Vẫn giữ phản hồi generic ở UI theo đúng luồng quên mật khẩu.
-      return null;
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleResetPassword = async (email: string, code: string, newPassword: string): Promise<string | null> => {
-    setAuthLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email, code, newPassword })
-      });
-      const json: ApiResponse<any> = await res.json();
-      if (json.success) return null;
-      return getResponseError(json, 'Không thể đặt lại mật khẩu.');
-    } catch {
-      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleFillDemoAccount = () => {
-    setLoginEmail('demo@dafl.vn');
-    setLoginPassword('Password123!');
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent, values?: { email: string; password: string }) => {
     e.preventDefault();
-    setAuthError(null);
-    setLoginEmailError(null);
-    setLoginPasswordError(null);
+    clearAuthErrors();
 
-    const normalizedEmail = loginEmail.trim().toLowerCase();
+    const normalizedEmail = (values?.email ?? loginEmail).trim().toLowerCase();
+    const password = values?.password ?? loginPassword;
     if (normalizedEmail !== loginEmail) setLoginEmail(normalizedEmail);
 
     if (!normalizedEmail) {
@@ -1030,109 +1176,83 @@ export default function App() {
       setLoginEmailError('Email không đúng định dạng.');
       return;
     }
-    if (!loginPassword) {
+    if (!password) {
       setLoginPasswordError('Mật khẩu không được để trống.');
       return;
     }
 
     setAuthLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/auth/login`, {
+      const { body } = await apiJson<AuthResult>('/api/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email: normalizedEmail, password: loginPassword })
+        skipAuthHandler: true,
+        body: JSON.stringify({ email: normalizedEmail, password }),
       });
-      const json: ApiResponse<User> = await res.json();
-      if (json.success && json.data) {
-        completeAuthentication(json.data);
-      } else if (json.message === UNVERIFIED_LOGIN_MESSAGE) {
-        setLoginFailureCount(0);
-        setVerificationEmail(normalizedEmail);
-        setVerificationNotice(json.message);
+      if (body?.success && body.data && body.data.token && body.data.user) {
+        await completeAuthentication(body.data);
       } else {
-        const message = getResponseError(json, 'Email hoặc mật khẩu không chính xác.');
-        setAuthError(message);
-        setLoginPasswordError(message);
-        setLoginFailureCount(prev => prev + 1);
+        // CN-02.3: một thông điệp chung, hiện dưới ô mật khẩu (một chỗ duy nhất).
+        setLoginPasswordError(body ? getResponseError(body, 'Email hoặc mật khẩu không đúng') : 'Email hoặc mật khẩu không đúng');
       }
     } catch {
-      if (normalizedEmail === 'demo@dafl.vn') {
-        const demoUser: User = {
-          id: '11111111-1111-1111-1111-111111111111',
-          email: 'demo@dafl.vn',
-          fullName: 'Nguyễn Văn Demo',
-          phoneNumber: '0987654321',
-          address: 'Số 1 Đại Cồ Việt, Hai Bà Trưng, Hà Nội',
-          role: 'Customer',
-          sessionId: 'demo-session-' + Date.now()
-        };
-        completeAuthentication(demoUser);
-      } else {
-        setAuthError('Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.');
-      }
+      setAuthError('Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.');
     } finally {
       setAuthLoading(false);
     }
   };
 
-  const handleRegister = async (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent, values?: RegisterFormValues) => {
     e.preventDefault();
     setAuthLoading(true);
     setAuthError(null);
+    setRegisterFieldErrors({});
+    setRegisterSuccess(false);
 
-    if (registerPassword.length < 8) {
-      setAuthError('Mật khẩu phải có tối thiểu 8 ký tự.');
-      setAuthLoading(false);
-      return;
-    }
-    if (!/[A-Z]/.test(registerPassword)) {
-      setAuthError('Mật khẩu phải chứa ít nhất 1 ký tự chữ hoa (A-Z).');
-      setAuthLoading(false);
-      return;
-    }
-    if (!/\d/.test(registerPassword)) {
-      setAuthError('Mật khẩu phải chứa ít nhất 1 chữ số (0-9).');
-      setAuthLoading(false);
-      return;
-    }
-    if (!/[^a-zA-Z0-9]/.test(registerPassword)) {
-      setAuthError('Mật khẩu phải chứa ít nhất 1 ký tự đặc biệt (!@#$%^&*...).');
-      setAuthLoading(false);
-      return;
-    }
-    if (registerPassword !== registerConfirmPassword) {
-      setAuthError('Mật khẩu xác nhận không khớp. Vui lòng kiểm tra lại.');
-      setAuthLoading(false);
-      return;
-    }
+    const fullName = values?.fullName ?? registerName.trim();
+    const email = values?.email ?? registerEmail.trim().toLowerCase();
+    const password = values?.password ?? registerPassword;
+    const phoneNumber = values?.phoneNumber ?? registerPhone.trim();
+    const confirmPassword = registerConfirmPassword;
 
     try {
-      const res = await fetch(`${API_BASE}/api/auth/register`, {
+      const { body } = await apiJson<AuthResult>('/api/auth/register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
+        skipAuthHandler: true,
         body: JSON.stringify({
-          fullName: registerName,
-          email: registerEmail,
-          password: registerPassword,
-          phoneNumber: registerPhone,
-          address: registerAddress
-        })
+          fullName,
+          email,
+          password,
+          confirmPassword,
+          phoneNumber,
+        }),
       });
-      const json: ApiResponse<User | RegisterVerificationResult> = await res.json();
-      if (json.success && json.data && 'requiresVerification' in json.data && json.data.requiresVerification) {
-        setVerificationEmail(json.data.email || registerEmail.trim().toLowerCase());
-        setVerificationNotice(json.message || 'Đã gửi mã xác thực về email của bạn. Vui lòng kiểm tra hộp thư (cả mục Spam/Quảng cáo).');
+      if (body?.success) {
+        // CN-01.4: KHÔNG tự đăng nhập dù BE có trả token — bỏ token, chuyển sang tab Đăng nhập.
         setRegisterPassword('');
         setRegisterConfirmPassword('');
-      } else if (json.success && json.data && 'id' in json.data) {
-        // Tương thích ngược nếu API cũ vẫn trả UserDto trực tiếp.
-        setRegisterPassword('');
-        setRegisterConfirmPassword('');
-        completeAuthentication(json.data, 'Đăng ký thành công', `Chào mừng ${json.data.fullName} đến với DAFL Store!`);
+        setLoginEmail(email);
+        setLoginPassword('');
+        setRegisterSuccess(true);
+        setAuthTab('login');
+        if (pathnameRef.current === '/register') {
+          navigate('/login');
+        }
       } else {
-        setAuthError(getResponseError(json, 'Không thể đăng ký tài khoản.'));
+        const message = body ? getResponseError(body, 'Không thể đăng ký tài khoản.') : 'Không thể đăng ký tài khoản.';
+        // Gán lỗi về đúng ô theo câu chữ của BE (CN-01.3).
+        if (message.includes('Email')) {
+          setRegisterFieldErrors({ email: message });
+        } else if (message.includes('Số điện thoại')) {
+          setRegisterFieldErrors({ phone: message });
+        } else if (message.includes('Họ tên')) {
+          setRegisterFieldErrors({ name: message });
+        } else if (message.includes('xác nhận')) {
+          setRegisterFieldErrors({ confirmPassword: message });
+        } else if (message.includes('Mật khẩu')) {
+          setRegisterFieldErrors({ password: message });
+        } else {
+          setAuthError(message);
+        }
       }
     } catch {
       setAuthError('Không thể kết nối đến máy chủ. Vui lòng thử lại sau.');
@@ -1141,53 +1261,227 @@ export default function App() {
     }
   };
 
+  // ------------------------------------------
+  // Đăng nhập mạng xã hội: token/mock → BE xác thực → JWT như đăng nhập thường
+  // ------------------------------------------
+  const handleSocialLogin = async (provider: SocialProviderKey, token: string): Promise<string | null> => {
+    const label = SOCIAL_PROVIDER_LABEL[provider];
+    setAuthLoading(true);
+    try {
+      const endpoint = provider === 'google' ? '/api/auth/social/google' : '/api/auth/social/facebook';
+      const reqBody = provider === 'google' ? { idToken: token } : { accessToken: token };
+      const { status, body } = await apiJson<AuthResult>(endpoint, {
+        method: 'POST',
+        skipAuthHandler: true,
+        body: JSON.stringify(reqBody),
+      });
+      const json = body as (ApiResponse<AuthResult> & { code?: string; errorCode?: string }) | null;
+      if (json?.success && json.data && json.data.token && json.data.user) {
+        await completeAuthentication(json.data, 'Đăng nhập thành công', json.message || undefined);
+        return null;
+      }
+      const code = json?.code || json?.errorCode;
+      if (code === 'SOCIAL_EMAIL_REQUIRED') {
+        return `Tài khoản ${label} của bạn không chia sẻ email. Vui lòng đăng ký bằng email để tiếp tục.`;
+      }
+      if (status === 401) {
+        return `Phiên đăng nhập ${label} đã hết hạn hoặc không hợp lệ. Vui lòng thử lại.`;
+      }
+      return json ? getResponseError(json, `Phiên đăng nhập ${label} đã hết hạn hoặc không hợp lệ. Vui lòng thử lại.`) : `Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`;
+    } catch {
+      return `Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`;
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSocialMockLogin = async (provider: SocialProviderKey): Promise<string | null> => {
+    const label = SOCIAL_PROVIDER_LABEL[provider];
+    setAuthLoading(true);
+    try {
+      const { body } = await apiJson<AuthResult>('/api/auth/social/mock', {
+        method: 'POST',
+        skipAuthHandler: true,
+        body: JSON.stringify({ provider: label }),
+      });
+      if (body?.success && body.data && body.data.token && body.data.user) {
+        await completeAuthentication(body.data, 'Đăng nhập thành công', body.message || undefined);
+        return null;
+      }
+      return body ? getResponseError(body, `Không thể đăng nhập bằng ${label}. Vui lòng thử lại.`) : `Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`;
+    } catch {
+      return `Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`;
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Đặt mật khẩu cho tài khoản social chưa có mật khẩu (trang Hồ sơ, CN-03).
+  const handleSetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSetPasswordError(null);
+    if (setPasswordValue.length < 8 || !/[A-Z]/.test(setPasswordValue) || !/\d/.test(setPasswordValue) || !/[^a-zA-Z0-9]/.test(setPasswordValue)) {
+      setSetPasswordError('Mật khẩu chưa đáp ứng đủ các điều kiện bảo mật bên dưới.');
+      return;
+    }
+    if (setPasswordValue !== setPasswordConfirm) {
+      setSetPasswordError('Mật khẩu nhập lại không khớp.');
+      return;
+    }
+    setSettingPassword(true);
+    try {
+      // BE SetPasswordRequest chỉ nhận { newPassword }.
+      const { body } = await apiJson<any>('/api/auth/set-password', {
+        method: 'POST',
+        body: JSON.stringify({ newPassword: setPasswordValue }),
+      });
+      if (body?.success) {
+        setUser(prev => (prev ? { ...prev, hasPassword: true } : prev));
+        setSetPasswordValue('');
+        setSetPasswordConfirm('');
+        setSetPasswordDone(true);
+        showToast('Đặt mật khẩu thành công', 'Từ nay bạn có thể đăng nhập bằng email và mật khẩu.', 'System');
+      } else {
+        setSetPasswordError(body ? getResponseError(body, 'Không thể đặt mật khẩu. Vui lòng thử lại.') : 'Không thể đặt mật khẩu. Vui lòng thử lại.');
+      }
+    } catch {
+      setSetPasswordError('Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.');
+    } finally {
+      setSettingPassword(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+      await apiFetch('/api/auth/logout', { method: 'POST', skipAuthHandler: true });
     } catch (err) {
       console.warn('Logout API offline:', err);
     } finally {
+      clearToken();
       setUser(null);
       setProfileFullName('');
       setProfileEmail('');
       setProfilePhone('');
-      setProfileAddress('');
-      setProfileNotes('');
+      setProfileNameError(null);
+      setProfilePhoneError(null);
+      setProfileSuccess(false);
+      setCpCurrent('');
+      setCpNew('');
+      setCpConfirm('');
+      setCpErrors({});
+      setCpSuccess(false);
+      setSetPasswordValue('');
+      setSetPasswordConfirm('');
+      setSetPasswordError(null);
+      setSetPasswordDone(false);
       setCustomerName('');
       setCustomerEmail('');
       setCustomerPhone('');
       setShippingAddress('');
       setOrderHistory([]);
-      localStorage.removeItem('dafl_saved_address');
+      setOrdersList([]);
+      setSelectedOrder(null);
+      setAppliedVoucher(null);
+      setVoucherMessage(null);
+      setCheckoutResult(null);
+      // CN-06.7: đăng xuất → hiển thị lại giỏ khách; giỏ server giữ nguyên ở BE.
+      setCart(readGuestCart());
       showToast('Đã đăng xuất', 'Hẹn gặp lại bạn!', 'System');
       navigateTo('home');
     }
   };
 
+  // ------------------------------------------
+  // Orders (CN-08)
+  // ------------------------------------------
   const fetchOrderHistory = async () => {
+    if (!getToken()) {
+      setOrderHistory([]);
+      return;
+    }
     setOrderHistoryLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (user?.id) params.append('userId', user.id);
-      const email = user?.email || customerEmail;
-      if (!user?.id && email) params.append('email', email);
-
-      if (!user?.id && !email) {
-        setOrderHistory([]);
-        return;
-      }
-
-      const res = await fetch(`${API_BASE}/api/orders/history?${params.toString()}`);
-      const json: ApiResponse<OrderHistory[]> = await res.json();
-      if (json.success && json.data) {
-        setOrderHistory(json.data);
-      } else {
+      const { body } = await apiJson<OrderHistory[]>('/api/orders/history');
+      if (body?.success && Array.isArray(body.data)) {
+        setOrderHistory(body.data);
+      } else if (body) {
         setOrderHistory([]);
       }
     } catch {
       setOrderHistory([]);
     } finally {
       setOrderHistoryLoading(false);
+    }
+  };
+
+  const fetchOrdersPage = async (page: number, statusLabel: string) => {
+    if (!getToken()) return;
+    const seq = ++ordersRequestSeq.current;
+    setOrdersLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('page', String(page));
+      params.append('pageSize', String(ORDERS_PAGE_SIZE + 1));
+      if (statusLabel) params.append('status', statusLabel);
+      const { body } = await apiJson<OrderHistory[]>(`/api/orders?${params.toString()}`);
+      if (seq !== ordersRequestSeq.current) return;
+      if (body?.success && Array.isArray(body.data)) {
+        setOrdersHasNext(body.data.length > ORDERS_PAGE_SIZE);
+        setOrdersList(body.data.slice(0, ORDERS_PAGE_SIZE));
+      }
+    } finally {
+      if (seq === ordersRequestSeq.current) setOrdersLoading(false);
+    }
+  };
+
+  const openOrderDetail = async (order: OrderHistory) => {
+    setSelectedOrder(order);
+    setCancelSuccessCode(null);
+    setOrderDetailLoading(true);
+    try {
+      const { body } = await apiJson<OrderHistory>(`/api/orders/${order.id}`);
+      if (body?.success && body.data) {
+        setSelectedOrder(body.data);
+      }
+    } catch {
+      /* giữ bản tóm tắt từ danh sách */
+    } finally {
+      setOrderDetailLoading(false);
+    }
+  };
+
+  const handleCancelOrder = async () => {
+    if (!cancelTarget) return;
+    const reason = cancelReasonChoice === 'Khác' ? cancelReasonText.trim() : cancelReasonChoice;
+    if (!reason) {
+      setCancelError('Vui lòng nhập lý do hủy đơn.');
+      return;
+    }
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      const { body } = await apiJson<any>(`/api/orders/${cancelTarget.id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+      if (body?.success) {
+        const code = cancelTarget.orderDisplayCode || `#${cancelTarget.orderCode}`;
+        setCancelTarget(null);
+        setCancelReasonText('');
+        // Cập nhật lại chi tiết + danh sách sau khi hủy (openOrderDetail sẽ xóa banner cũ,
+        // nên chỉ set thông báo thành công SAU khi tải lại chi tiết xong).
+        await openOrderDetail(cancelTarget);
+        setCancelSuccessCode(code);
+        fetchOrdersPage(ordersPageNum, orderStatusFilter);
+        fetchOrderHistory();
+      } else {
+        setCancelError(body?.message || 'Không thể hủy đơn hàng.');
+        await openOrderDetail(cancelTarget);
+      }
+    } catch {
+      setCancelError('Không thể kết nối đến máy chủ. Vui lòng thử lại.');
+    } finally {
+      setCancelBusy(false);
     }
   };
 
@@ -1217,10 +1511,6 @@ export default function App() {
     }
 
     navigate(newUrl);
-    if (route === 'orders') {
-      fetchOrderHistory();
-    }
-
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -1242,11 +1532,6 @@ export default function App() {
     }
   }, [navigate]);
 
-  const openOrderHistory = async () => {
-    navigateTo('orders');
-    await fetchOrderHistory();
-  };
-
   // Sync product detail when route matches /product/:id
   useEffect(() => {
     if (matchedProductId) {
@@ -1254,73 +1539,135 @@ export default function App() {
     } else {
       lastLoadedProductIdRef.current = null;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchedProductId]);
 
+  // ------------------------------------------
+  // Profile (CN-03.1) & Change Password (CN-03.2)
+  // ------------------------------------------
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    const name = profileFullName.trim();
+    const phone = profilePhone.trim();
+    const nameError = name.length < 2 || name.length > 50 ? 'Họ tên không hợp lệ' : null;
+    const phoneError = phone && !/^0\d{9}$/.test(phone) ? 'Số điện thoại không hợp lệ' : null;
+    setProfileNameError(nameError);
+    setProfilePhoneError(phoneError);
+    setProfileSuccess(false);
+    if (nameError || phoneError) return;
+
     setSavingProfile(true);
     try {
-      const res = await fetch(`${API_BASE}/api/auth/profile`, {
+      const { body } = await apiJson<User>('/api/auth/profile', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
-          fullName: profileFullName,
-          phoneNumber: profilePhone,
-          address: profileAddress
-        })
+          fullName: name,
+          phoneNumber: phone,
+          // Giữ nguyên địa chỉ legacy của user để không bị xóa khi BE gán đè.
+          address: user?.address,
+        }),
       });
-      const json: ApiResponse<User> = await res.json();
-      if (json.success && json.data) {
-        setUser(json.data);
-        setCustomerName(json.data.fullName);
-        if (json.data.phoneNumber) setCustomerPhone(json.data.phoneNumber);
-        if (json.data.address) setShippingAddress(json.data.address);
-        showToast('Cập nhật thành công', 'Địa chỉ giao hàng đã được cập nhật thành công!', 'System');
+      if (body?.success && body.data) {
+        setUser(body.data);
+        setProfileSuccess(true);
+        showToast('Cập nhật thành công', 'Thông tin hồ sơ của bạn đã được lưu.', 'System');
       } else {
-        setCustomerName(profileFullName);
-        setCustomerPhone(profilePhone);
-        setShippingAddress(profileAddress);
-        setUser(prev => prev ? ({ ...prev, fullName: profileFullName, phoneNumber: profilePhone, address: profileAddress }) : null);
-        showToast('Cập nhật thành công', 'Địa chỉ giao hàng đã được lưu.', 'System');
+        const message = body ? getResponseError(body, 'Không thể cập nhật hồ sơ.') : 'Không thể cập nhật hồ sơ.';
+        if (message.includes('Số điện thoại')) setProfilePhoneError(message);
+        else if (message.includes('Họ tên')) setProfileNameError(message);
+        else showToast('Không cập nhật được hồ sơ', message, 'System');
       }
-      localStorage.setItem('dafl_saved_address', JSON.stringify({
-        fullName: profileFullName,
-        phone: profilePhone,
-        address: profileAddress,
-        notes: profileNotes
-      }));
     } catch {
-      setCustomerName(profileFullName);
-      setCustomerPhone(profilePhone);
-      setShippingAddress(profileAddress);
-      setUser(prev => prev ? ({ ...prev, fullName: profileFullName, phoneNumber: profilePhone, address: profileAddress }) : null);
-      showToast('Cập nhật thành công', 'Địa chỉ giao hàng đã được lưu.', 'System');
+      showToast('Không cập nhật được hồ sơ', 'Không thể kết nối đến máy chủ.', 'System');
     } finally {
       setSavingProfile(false);
     }
   };
 
-  const handleReorder = (order: OrderHistory) => {
-    const newItems: CartItem[] = [];
-    order.items.forEach(it => {
-      const existingProd = products.find(p => p.id === it.productId) || {
-        id: it.productId,
-        name: it.productName,
-        slug: it.productName.toLowerCase().replace(/\s+/g, '-'),
-        categoryId: 'cat-1',
-        categoryName: 'Sản phẩm',
-        description: `Sản phẩm từ đơn hàng #${order.orderCode}`,
-        price: it.unitPrice,
-        availableStock: 99,
-        imageUrl: it.productImageUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80'
-      };
-      newItems.push({ product: existingProd, quantity: it.quantity });
-    });
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const errors: { current?: string; next?: string; confirm?: string } = {};
+    if (!cpCurrent) errors.current = 'Vui lòng nhập mật khẩu hiện tại.';
+    if (!cpNew) {
+      errors.next = 'Vui lòng nhập mật khẩu mới.';
+    } else if (cpNew.length < 8 || !/[A-Z]/.test(cpNew) || !/\d/.test(cpNew) || !/[^a-zA-Z0-9]/.test(cpNew)) {
+      errors.next = 'Mật khẩu chưa đáp ứng đủ các điều kiện bảo mật bên dưới.';
+    } else if (cpCurrent && cpNew === cpCurrent) {
+      errors.next = 'Mật khẩu mới không được trùng với mật khẩu cũ';
+    }
+    if (!cpConfirm) {
+      errors.confirm = 'Vui lòng nhập lại mật khẩu mới.';
+    } else if (cpConfirm !== cpNew) {
+      errors.confirm = 'Mật khẩu xác nhận không khớp';
+    }
+    setCpErrors(errors);
+    setCpSuccess(false);
+    if (Object.values(errors).some(Boolean)) return;
 
-    setCart(newItems);
+    setCpBusy(true);
+    try {
+      const { body } = await apiJson<any>('/api/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: cpCurrent, newPassword: cpNew, confirmNewPassword: cpConfirm }),
+      });
+      if (body?.success) {
+        setCpCurrent('');
+        setCpNew('');
+        setCpConfirm('');
+        setCpSuccess(true);
+        showToast('Đổi mật khẩu thành công', body.message || 'Mật khẩu của bạn đã được cập nhật.', 'System');
+      } else {
+        const message = body ? getResponseError(body, 'Không thể đổi mật khẩu.') : 'Không thể đổi mật khẩu.';
+        // Lỗi mật khẩu hiện tại sai → hiện dưới ô mật khẩu hiện tại.
+        if (message.includes('hiện tại')) setCpErrors({ current: message });
+        else if (message.includes('xác nhận')) setCpErrors({ confirm: message });
+        else if (message.includes('trùng')) setCpErrors({ next: message });
+        else setCpErrors({ current: message });
+      }
+    } catch {
+      setCpErrors({ current: 'Không thể kết nối đến máy chủ. Vui lòng thử lại sau.' });
+    } finally {
+      setCpBusy(false);
+    }
+  };
+
+  const handleReorder = async (order: OrderHistory) => {
+    if (!order.items || order.items.length === 0) return;
+    if (user) {
+      for (const it of order.items) {
+        await apiJson<ServerCartDto>('/api/cart/items', {
+          method: 'POST',
+          body: JSON.stringify({ productId: it.productId, quantity: it.quantity }),
+        }).catch(() => null);
+      }
+      await loadServerCart();
+    } else {
+      const newItems: CartItem[] = order.items.map(it => {
+        const existingProd = products.find(p => p.id === it.productId) || {
+          id: it.productId,
+          name: it.productName,
+          slug: it.productName.toLowerCase().replace(/\s+/g, '-'),
+          categoryId: 'cat-1',
+          categoryName: 'Sản phẩm',
+          description: `Sản phẩm từ đơn hàng #${order.orderCode}`,
+          price: it.unitPrice,
+          availableStock: 99,
+          imageUrl: it.productImageUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80'
+        };
+        return { product: existingProd, quantity: it.quantity };
+      });
+      setCart(prev => {
+        const merged = [...prev];
+        newItems.forEach(ni => {
+          const ex = merged.find(m => m.product.id === ni.product.id);
+          if (ex) ex.quantity += ni.quantity;
+          else merged.push(ni);
+        });
+        return merged;
+      });
+    }
     navigate('/cart');
-    showToast('Đã thêm vào giỏ', `Đã thêm ${newItems.length} món từ đơn #${order.orderCode} vào giỏ hàng!`, 'Promotion');
+    showToast('Đã thêm vào giỏ', `Đã thêm ${order.items.length} món từ đơn ${order.orderDisplayCode || `#${order.orderCode}`} vào giỏ hàng!`, 'Promotion');
   };
 
   const handleSimulatePaymentForOrder = async (orderCode: number, _totalAmount?: number) => {
@@ -1330,7 +1677,6 @@ export default function App() {
       if (json.success && json.data?.status === 'Paid') {
         if (checkoutResult && checkoutResult.orderCode === orderCode) {
           setOrderStatus('Paid');
-          setCart([]);
         }
         if (embeddedPaymentModal && embeddedPaymentModal.orderCode === orderCode) {
           setEmbeddedPaymentModal(null);
@@ -1367,10 +1713,7 @@ export default function App() {
     }
   };
 
-
-
   const unreadCount = notifications.filter(n => !n.isRead).length;
-  const visibleProducts = products.filter(matchesHomeFilters);
   const formatPrice = (val: number) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
   const formatTime = (secs: number) => {
     const mins = Math.floor(secs / 60);
@@ -1378,8 +1721,17 @@ export default function App() {
     return `${mins.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const orderStatusLabelOf = (order: OrderHistory): string =>
+    order.statusLabel || (order.status === 'Pending'
+      ? (order.paymentMethod === 'PayOS' ? 'Chờ thanh toán' : 'Chờ xác nhận')
+      : order.status === 'Paid' ? 'Chờ xác nhận'
+      : order.status === 'Preparing' ? 'Đang chuẩn bị'
+      : order.status === 'Shipping' ? 'Đang giao'
+      : order.status === 'Delivered' ? 'Đã giao'
+      : order.status === 'Cancelled' ? 'Đã hủy'
+      : order.status === 'Expired' ? 'Đã hết hạn' : order.status);
+
   const commonAuthProps = {
-    gateNotice: authGateNotice,
     authError,
     authLoading,
     loginEmail,
@@ -1388,7 +1740,6 @@ export default function App() {
     setLoginPassword: updateLoginPassword,
     loginEmailError,
     loginPasswordError,
-    loginFailureCount,
     registerName,
     setRegisterName,
     registerEmail,
@@ -1399,19 +1750,14 @@ export default function App() {
     setRegisterConfirmPassword,
     registerPhone,
     setRegisterPhone,
-    registerAddress,
-    setRegisterAddress,
-    verificationEmail,
-    verificationNotice,
+    registerFieldErrors,
+    registerSuccess,
+    sessionExpired,
     onLogin: handleLogin,
     onRegister: handleRegister,
-    onVerifyEmail: handleVerifyEmail,
-    onResendVerification: handleResendVerification,
-    onOtpLoginRequest: handleOtpLoginRequest,
-    onOtpLoginVerify: handleOtpLoginVerify,
-    onForgotPasswordRequest: handleForgotPasswordRequest,
-    onResetPassword: handleResetPassword,
-    onFillDemoAccount: handleFillDemoAccount,
+    onSocialLogin: handleSocialLogin,
+    onSocialMockLogin: handleSocialMockLogin,
+    onClearAuthErrors: clearAuthErrors,
   };
 
   const isStandalone = location.pathname.startsWith('/mock-payos') || location.pathname.startsWith('/payment-success');
@@ -1421,7 +1767,7 @@ export default function App() {
       {/* Live Toast Notification Alert */}
       {!isStandalone && toastAlert && (
         <div className="toast-container">
-          <div className="toast-alert">
+          <div className="toast-alert" data-testid={toastAlert.testId}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               <Sparkles size={16} color="#e40046" />
               <strong style={{ fontSize: '0.875rem', color: 'var(--text-main)' }}>{toastAlert.title}</strong>
@@ -1489,22 +1835,34 @@ export default function App() {
                   <div className="filter-panel">
                     <div className="filter-group">
                       <h3>Khoảng giá</h3>
-                      {[
-                        { value: 'all', label: 'Tất cả mức giá' },
-                        { value: 'under-500', label: 'Dưới 500.000đ' },
-                        { value: '500-2000', label: '500.000đ — 2.000.000đ' },
-                        { value: 'over-2000', label: 'Trên 2.000.000đ' },
-                      ].map(option => (
-                        <label key={option.value} className="filter-option">
-                          <input
-                            type="radio"
-                            name="home-price-range"
-                            checked={homePriceRange === option.value}
-                            onChange={() => setHomePriceRange(option.value as typeof homePriceRange)}
-                          />
-                          <span>{option.label}</span>
-                        </label>
-                      ))}
+                      <div className="price-range-inputs">
+                        <input
+                          className="form-input"
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="Từ (đ)"
+                          value={priceFromText}
+                          onChange={e => setPriceFromText(e.target.value)}
+                          data-testid="price-from-input"
+                          aria-label="Giá từ"
+                        />
+                        <span className="price-range-sep">—</span>
+                        <input
+                          className="form-input"
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="Đến (đ)"
+                          value={priceToText}
+                          onChange={e => setPriceToText(e.target.value)}
+                          data-testid="price-to-input"
+                          aria-label="Giá đến"
+                        />
+                      </div>
+                      {priceFilterError && (
+                        <div data-testid="price-filter-error" className="filter-error">
+                          {priceFilterError}
+                        </div>
+                      )}
                     </div>
 
                     <div className="filter-group">
@@ -1527,18 +1885,6 @@ export default function App() {
                         </button>
                       ))}
                     </div>
-
-                    <div className="filter-group">
-                      <h3>Tình trạng</h3>
-                      <label className="filter-option">
-                        <input
-                          type="checkbox"
-                          checked={homeInStockOnly}
-                          onChange={e => setHomeInStockOnly(e.target.checked)}
-                        />
-                        <span>Chỉ hiển thị sản phẩm còn hàng</span>
-                      </label>
-                    </div>
                   </div>
                 </aside>
 
@@ -1548,12 +1894,30 @@ export default function App() {
                     <h2>
                       {selectedCategory ? (categories.find(c => c.id === selectedCategory)?.name || 'Danh mục sản phẩm') : 'Tất cả sản phẩm'}
                     </h2>
-                    {visibleProducts.length > 0 && (
-                      <div className="product-count-badge">
+                    <div className="catalog-toolbar">
+                      <span className="product-count-badge" data-testid="catalog-result-count">
                         <Package size={14} color="var(--primary)" />
-                        <span>Hiển thị {Math.min(visibleCount, visibleProducts.length)} / {visibleProducts.length} sản phẩm</span>
-                      </div>
-                    )}
+                        <span>
+                          {catalogKnownTotal !== null
+                            ? `Hiển thị ${products.length} / ${catalogKnownTotal} sản phẩm`
+                            : `Hiển thị ${products.length} sản phẩm`}
+                          {catalogPage > 1 ? ` • Trang ${catalogPage}` : ''}
+                        </span>
+                      </span>
+                      <label className="sort-label">
+                        Sắp xếp:
+                        <select
+                          className="form-input sort-select"
+                          value={sortOrder}
+                          onChange={e => setSortOrder(e.target.value as typeof sortOrder)}
+                          data-testid="sort-select"
+                        >
+                          <option value="newest">Mới nhất</option>
+                          <option value="price-asc">Giá tăng dần</option>
+                          <option value="price-desc">Giá giảm dần</option>
+                        </select>
+                      </label>
+                    </div>
                   </div>
 
                   {loading ? (
@@ -1561,14 +1925,17 @@ export default function App() {
                       <RefreshCw size={24} className="spin" />
                       <div>Đang tải danh sách sản phẩm...</div>
                     </div>
-                  ) : visibleProducts.length === 0 ? (
-                    <div className="shop-empty-state">
-                      Không tìm thấy sản phẩm nào phù hợp với tìm kiếm và bộ lọc hiện tại.
+                  ) : products.length === 0 ? (
+                    <div className="shop-empty-state" data-testid="catalog-empty-state">
+                      <p>Không tìm thấy sản phẩm phù hợp</p>
+                      <button type="button" className="btn btn-primary" onClick={clearCatalogFilters} data-testid="clear-filters-btn">
+                        Xóa bộ lọc
+                      </button>
                     </div>
                   ) : (
                     <>
                       <div className="products-grid">
-                        {visibleProducts.slice(0, visibleCount).map(product => (
+                        {products.map(product => (
                           <ProductCard
                             key={product.id}
                             product={product}
@@ -1578,36 +1945,48 @@ export default function App() {
                         ))}
                       </div>
 
-                      {/* Scroll Sentinel for Infinite Scroll Lazy Loading */}
-                      <div ref={loadMoreSentinelRef} className="load-more-sentinel" />
-
-                      {/* Lazy Load Spinner */}
-                      {isLoadingMore && (
-                        <div className="lazy-load-indicator">
-                          <RefreshCw size={20} className="spin" />
-                          <span>Đang tải thêm sản phẩm khi cuộn...</span>
-                        </div>
-                      )}
-
-                      {/* Manual Load More Button as Fallback */}
-                      {!isLoadingMore && visibleCount < visibleProducts.length && (
-                        <div className="load-more-action">
+                      {/* Phân trang server 12/trang (CN-04.4) — giữ nguyên bộ lọc khi chuyển trang */}
+                      <nav className="catalog-pagination" data-testid="catalog-pagination" aria-label="Phân trang sản phẩm">
+                        <button
+                          type="button"
+                          className="btn btn-secondary pagination-btn"
+                          disabled={catalogPage <= 1}
+                          onClick={() => setCatalogPage(p => Math.max(1, p - 1))}
+                          data-testid="pagination-prev-btn"
+                        >
+                          ← Trang trước
+                        </button>
+                        {Array.from({ length: catalogPage }, (_, i) => i + 1).map(n => (
                           <button
-                            className="btn btn-secondary"
-                            onClick={handleLoadMore}
+                            key={n}
+                            type="button"
+                            className={`btn pagination-page-btn ${n === catalogPage ? 'btn-primary' : 'btn-secondary'}`}
+                            onClick={() => setCatalogPage(n)}
+                            data-testid={`pagination-page-${n}`}
                           >
-                            Tải thêm {Math.min(16, visibleProducts.length - visibleCount)} sản phẩm tiếp theo
+                            {n}
                           </button>
-                        </div>
-                      )}
-
-                      {/* End of list state */}
-                      {visibleCount >= visibleProducts.length && visibleProducts.length > 0 && (
-                        <div className="lazy-load-end">
-                          <CheckCircle2 size={18} color="#2e7d4f" />
-                          <span>Bạn đã xem toàn bộ {visibleProducts.length} sản phẩm</span>
-                        </div>
-                      )}
+                        ))}
+                        {catalogHasNext && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary pagination-page-btn"
+                            onClick={() => setCatalogPage(catalogPage + 1)}
+                            data-testid={`pagination-page-${catalogPage + 1}`}
+                          >
+                            {catalogPage + 1}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn btn-secondary pagination-btn"
+                          disabled={!catalogHasNext}
+                          onClick={() => setCatalogPage(p => p + 1)}
+                          data-testid="pagination-next-btn"
+                        >
+                          Trang sau →
+                        </button>
+                      </nav>
                     </>
                   )}
                 </section>
@@ -1638,7 +2017,7 @@ export default function App() {
         />
 
         {/* ============================================================== */}
-        {/* ROUTE VIEW: ORDERS & ORDER HISTORY (/orders) */}
+        {/* ROUTE VIEW: ORDERS & ORDER HISTORY (/orders) — CN-08 */}
         {/* ============================================================== */}
         <Route
           path="/orders"
@@ -1659,11 +2038,11 @@ export default function App() {
                         <ArrowLeft size={16} /> Tiếp tục mua sắm
                       </button>
                       <h1 className="page-title" style={{ margin: 0 }}>
-                        <Package size={26} color="var(--primary)" /> Quản lý Đơn Mua & Lịch Sử Đơn Hàng
+                        <Package size={26} color="var(--primary)" /> Đơn hàng của tôi
                       </h1>
                     </div>
                     <p className="page-subtitle" style={{ marginTop: 6 }}>
-                      Theo dõi tiến độ đơn hàng, thanh toán trực tiếp qua PayOS trên web và kiểm tra trạng thái thời gian thực.
+                      Theo dõi tiến độ đơn hàng, xem chi tiết và hủy đơn khi đơn còn ở trạng thái Chờ xác nhận.
                     </p>
                   </div>
 
@@ -1671,11 +2050,11 @@ export default function App() {
                     <button
                       type="button"
                       className="btn btn-secondary"
-                      onClick={fetchOrderHistory}
-                      disabled={orderHistoryLoading}
+                      onClick={() => { fetchOrdersPage(ordersPageNum, orderStatusFilter); fetchOrderHistory(); }}
+                      disabled={ordersLoading}
                       style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}
                     >
-                      <RefreshCw size={15} className={orderHistoryLoading ? 'spin' : ''} />
+                      <RefreshCw size={15} className={ordersLoading ? 'spin' : ''} />
                       Làm mới danh sách
                     </button>
                     <button
@@ -1684,40 +2063,47 @@ export default function App() {
                       onClick={() => navigateTo('profile')}
                       style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}
                     >
-                      <MapPin size={15} color="#e40046" /> Cấu hình địa chỉ nhận hàng
+                      <MapPin size={15} color="#e40046" /> Sổ địa chỉ giao hàng
                     </button>
                   </div>
                 </div>
 
-                {/* Filter Tabs */}
-                <div className="order-filter-tabs">
-                  {[
-                    { key: 'all', label: `Tất cả (${orderHistory.length})` },
-                    { key: 'Pending', label: `Chờ thanh toán (${orderHistory.filter(o => o.status === 'Pending').length})` },
-                    { key: 'Paid', label: `Đã thanh toán (${orderHistory.filter(o => o.status === 'Paid').length})` },
-                    { key: 'Shipping', label: `Đang giao hàng (${orderHistory.filter(o => o.status === 'Shipping').length})` },
-                    { key: 'Completed', label: `Hoàn tất (${orderHistory.filter(o => o.status === 'Completed').length})` },
-                    { key: 'Cancelled', label: `Đã hủy (${orderHistory.filter(o => o.status === 'Cancelled').length})` }
-                  ].map(tab => (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      className={`order-filter-btn ${orderFilter === tab.key ? 'active' : ''}`}
-                      onClick={() => setOrderFilter(tab.key as any)}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
+                {/* Bộ lọc theo nhãn trạng thái (CN-08.1) */}
+                <div className="orders-filter-bar">
+                  <label htmlFor="order-status-filter" style={{ fontSize: '0.85rem', fontWeight: 600 }}>
+                    Lọc theo trạng thái:
+                  </label>
+                  <select
+                    id="order-status-filter"
+                    className="form-input orders-filter-select"
+                    value={orderStatusFilter}
+                    onChange={e => setOrderStatusFilter(e.target.value)}
+                    data-testid="order-status-filter"
+                  >
+                    <option value="">Tất cả</option>
+                    <option value="Chờ xác nhận">Chờ xác nhận</option>
+                    <option value="Chờ thanh toán">Chờ thanh toán</option>
+                    <option value="Đang chuẩn bị">Đang chuẩn bị</option>
+                    <option value="Đang giao">Đang giao</option>
+                    <option value="Đã giao">Đã giao</option>
+                    <option value="Đã hủy">Đã hủy</option>
+                  </select>
                 </div>
 
+                {cancelSuccessCode && (
+                  <div className="cancel-success-banner" data-testid="cancel-success-msg">
+                    <CheckCircle2 size={16} color="#16a34a" /> Hủy đơn thành công
+                  </div>
+                )}
+
                 {/* Orders List */}
-                {orderHistoryLoading ? (
+                {ordersLoading && ordersList.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
                     <RefreshCw size={36} className="spin" style={{ margin: '0 auto 12px', color: 'var(--primary)' }} />
                     <p>Đang tải danh sách đơn hàng từ máy chủ...</p>
                   </div>
-                ) : orderHistory.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '60px 0', background: 'var(--bg-card)', borderRadius: 16, border: '1px solid var(--border-subtle)' }}>
+                ) : ordersList.length === 0 ? (
+                  <div className="empty-state-card" data-testid="orders-empty-state">
                     <Package size={56} style={{ margin: '0 auto 14px', opacity: 0.3, color: 'var(--text-muted)' }} />
                     <h3 style={{ fontSize: '1.2rem', marginBottom: 8 }}>Bạn chưa có đơn hàng nào</h3>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 20 }}>
@@ -1728,32 +2114,22 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <div className="orders-list-container">
-                    {orderHistory
-                      .filter(o => orderFilter === 'all' || o.status === orderFilter)
-                      .map(order => {
-                        const statusClass = order.status.toLowerCase();
+                  <>
+                    <div className="orders-list-container" data-testid="orders-list">
+                      {ordersList.map(order => {
+                        const label = orderStatusLabelOf(order);
+                        const displayCode = order.orderDisplayCode || `#${order.orderCode}`;
                         return (
-                          <div key={order.id} className="order-card">
-                            {/* Order Card Header */}
+                          <div key={order.id} className="order-card" data-testid={`order-item-${displayCode}`}>
                             <div className="order-card-header">
                               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                                 <span style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--text-main)' }}>
-                                  Mã đơn: #{order.orderCode}
+                                  Mã đơn: {displayCode}
                                 </span>
-                                <span className={`order-status-badge ${statusClass}`}>
-                                  {order.status === 'Paid' && <CheckCircle2 size={13} />}
-                                  {order.status === 'Pending' && <Clock size={13} />}
-                                  {order.status === 'Shipping' && <Truck size={13} />}
-                                  {order.status === 'Completed' && <CheckCircle2 size={13} />}
-                                  {order.status === 'Paid' ? 'Đã thanh toán (PayOS)' :
-                                    order.status === 'Pending' ? 'Chờ thanh toán' :
-                                      order.status === 'Shipping' ? 'Đang giao hàng' :
-                                        order.status === 'Completed' ? 'Giao thành công' :
-                                          order.status === 'Cancelled' ? 'Đã hủy' : order.status}
+                                <span className={`order-status-badge ${order.status.toLowerCase()}`}>
+                                  {label}
                                 </span>
                               </div>
-
                               <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                                 <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                   <Calendar size={14} /> {new Date(order.createdAt).toLocaleString('vi-VN')}
@@ -1761,17 +2137,8 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* Recipient & Shipping Address */}
-                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 14px', background: 'var(--bg-subtle)', borderRadius: 8, marginBottom: 14, fontSize: '0.85rem' }}>
-                              <MapPin size={16} color="var(--primary)" style={{ flexShrink: 0, marginTop: 2 }} />
-                              <div>
-                                <strong>{order.customerName}</strong> ({order.customerPhone}) — <span style={{ color: 'var(--text-muted)' }}>{order.shippingAddress}</span>
-                              </div>
-                            </div>
-
-                            {/* Order Items */}
                             <div className="order-items-list">
-                              {order.items && order.items.map(item => (
+                              {order.items && order.items.slice(0, 3).map(item => (
                                 <div key={item.id} className="order-item-row">
                                   <img
                                     src={item.productImageUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80'}
@@ -1791,75 +2158,275 @@ export default function App() {
                                   </div>
                                 </div>
                               ))}
+                              {order.items && order.items.length > 3 && (
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '4px 0' }}>
+                                  … và {order.items.length - 3} sản phẩm khác
+                                </div>
+                              )}
                             </div>
 
-                            {/* Order Status Timeline (If exists) */}
-                            {order.statusHistories && order.statusHistories.length > 0 && (
-                              <div className="order-timeline-box">
-                                <div style={{ fontWeight: 700, marginBottom: 6, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                  Tiến trình trạng thái đơn hàng:
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                  {order.statusHistories.map((h, i) => (
-                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem' }}>
-                                      <CheckCircle2 size={12} color="#10b981" />
-                                      <span>{new Date(h.timestamp).toLocaleTimeString('vi-VN')}</span>
-                                      <span style={{ fontWeight: 600 }}>{h.note || 'Cập nhật trạng thái'}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Order Footer & Actions */}
                             <div className="order-footer-actions">
-                              <div>
-                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                  {order.discountAmount > 0 && (
-                                    <span>
-                                      Đã giảm <strong style={{ color: '#10b981' }}>-{formatPrice(order.discountAmount)}</strong>
-                                      {order.voucherCode ? ` (Mã: ${order.voucherCode})` : ''} •
-                                    </span>
-                                  )}
-                                  {' '}Tổng giá trị đơn: <strong style={{ color: '#e40046', fontSize: '1.15rem' }}>{formatPrice(order.totalAmount)}</strong>
-                                </div>
+                              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                Tổng giá trị đơn: <strong style={{ color: '#e40046', fontSize: '1.15rem' }}>{formatPrice(order.totalAmount)}</strong>
                               </div>
-
                               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                {order.status === 'Pending' && (
+                                {label === 'Chờ thanh toán' && (
                                   <button
                                     type="button"
                                     className="btn btn-primary"
                                     style={{ padding: '8px 16px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                                    onClick={() => {
-                                      if (!user) {
-                                        sessionStorage.setItem('dafl_return_route', `/payment/${order.orderCode}`);
-                                        showToast('Yêu cầu đăng nhập', 'Vui lòng đăng nhập để tiến hành thanh toán đơn hàng.', 'System');
-                                        navigate('/login');
-                                        return;
-                                      }
-                                      navigate(`/payment/${order.orderCode}`);
-                                    }}
+                                    onClick={() => navigate(`/payment/${order.orderCode}`)}
                                   >
-                                    <CreditCard size={15} /> Thanh toán ngay (PayOS trực tiếp)
+                                    <CreditCard size={15} /> Thanh toán ngay
                                   </button>
                                 )}
-
-                                {(order.status === 'Paid' || order.status === 'Completed') && (
+                                {(order.status === 'Paid' || order.status === 'Delivered') && (
                                   <button
                                     type="button"
                                     className="btn btn-secondary"
                                     style={{ padding: '8px 16px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
                                     onClick={() => handleReorder(order)}
                                   >
-                                    <RotateCcw size={14} /> Mua lại đơn này
+                                    <RotateCcw size={14} /> Mua lại
                                   </button>
                                 )}
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                                  onClick={() => openOrderDetail(order)}
+                                  data-testid={`order-detail-btn-${displayCode}`}
+                                >
+                                  Xem chi tiết
+                                </button>
                               </div>
                             </div>
                           </div>
                         );
                       })}
+                    </div>
+
+                    {/* Phân trang đơn hàng */}
+                    <nav className="catalog-pagination" data-testid="orders-pagination" aria-label="Phân trang đơn hàng">
+                      <button
+                        type="button"
+                        className="btn btn-secondary pagination-btn"
+                        disabled={ordersPageNum <= 1}
+                        onClick={() => setOrdersPageNum(p => Math.max(1, p - 1))}
+                        data-testid="orders-prev-btn"
+                      >
+                        ← Trang trước
+                      </button>
+                      <span className="pagination-current">Trang {ordersPageNum}</span>
+                      <button
+                        type="button"
+                        className="btn btn-secondary pagination-btn"
+                        disabled={!ordersHasNext}
+                        onClick={() => setOrdersPageNum(p => p + 1)}
+                        data-testid="orders-next-btn"
+                      >
+                        Trang sau →
+                      </button>
+                    </nav>
+                  </>
+                )}
+
+                {/* Chi tiết đơn hàng (CN-08.2) */}
+                {selectedOrder && (
+                  <div className="order-detail-card" data-testid="order-detail-view">
+                    <div className="order-detail-header">
+                      <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>
+                        Chi tiết đơn {selectedOrder.orderDisplayCode || `#${selectedOrder.orderCode}`}
+                      </h3>
+                      <span className={`order-status-badge ${selectedOrder.status.toLowerCase()}`} data-testid="order-detail-status">
+                        {orderStatusLabelOf(selectedOrder)}
+                      </span>
+                    </div>
+
+                    <div
+                      data-testid="order-shipping-info"
+                      style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 14px', background: 'var(--bg-subtle)', borderRadius: 8, marginBottom: 14, fontSize: '0.85rem' }}
+                    >
+                      <MapPin size={16} color="var(--primary)" style={{ flexShrink: 0, marginTop: 2 }} />
+                      <div>
+                        <strong>{selectedOrder.customerName}</strong> ({selectedOrder.customerPhone}) —{' '}
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          {selectedOrder.shippingAddress ||
+                            [selectedOrder.shipDetailAddress, selectedOrder.shipWardName, selectedOrder.shipDistrictName, selectedOrder.shipProvinceName]
+                              .filter(Boolean)
+                              .join(', ')}
+                        </span>
+                        {selectedOrder.shipNote && (
+                          <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                            Ghi chú giao hàng: {selectedOrder.shipNote}
+                          </div>
+                        )}
+                        <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                          Phương thức thanh toán: {selectedOrder.paymentMethod === 'PayOS' ? 'PayOS (thanh toán trực tuyến)' : 'Thanh toán khi nhận hàng (COD)'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="order-items-list">
+                      {selectedOrder.items && selectedOrder.items.map(item => (
+                        <div key={item.id} className="order-item-row">
+                          <img
+                            src={item.productImageUrl || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80'}
+                            alt={item.productName}
+                            className="order-item-img"
+                          />
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: 4 }}>{item.productName}</div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                              Số lượng: x{item.quantity} • Đơn giá: {formatPrice(item.unitPrice)}
+                            </div>
+                          </div>
+                          <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-main)' }}>
+                            {formatPrice(item.unitPrice * item.quantity)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="order-detail-totals">
+                      <div><span>Tạm tính:</span><span>{formatPrice(selectedOrder.subTotal)}</span></div>
+                      {(selectedOrder.shippingFee ?? 0) > 0 && (
+                        <div><span>Phí vận chuyển:</span><span>{formatPrice(selectedOrder.shippingFee || 0)}</span></div>
+                      )}
+                      {(selectedOrder.shippingFee ?? 0) === 0 && (
+                        <div><span>Phí vận chuyển:</span><span>Miễn phí</span></div>
+                      )}
+                      {selectedOrder.discountAmount > 0 && (
+                        <div><span>Giảm giá{selectedOrder.voucherCode ? ` (${selectedOrder.voucherCode})` : ''}:</span><span>-{formatPrice(selectedOrder.discountAmount)}</span></div>
+                      )}
+                      <div className="order-detail-grand-total"><span>Tổng cộng:</span><span>{formatPrice(selectedOrder.totalAmount)}</span></div>
+                    </div>
+
+                    {selectedOrder.statusHistories && selectedOrder.statusHistories.length > 0 && (
+                      <div className="order-timeline-box" data-testid="order-timeline">
+                        <div style={{ fontWeight: 700, marginBottom: 6, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Tiến trình trạng thái đơn hàng:
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {selectedOrder.statusHistories.map((h, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem' }}>
+                              <CheckCircle2 size={12} color="#10b981" />
+                              <span>{new Date(h.timestamp).toLocaleString('vi-VN')}</span>
+                              <span style={{ fontWeight: 600 }}>{h.note || 'Cập nhật trạng thái'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {orderStatusLabelOf(selectedOrder) === 'Đã hủy' && selectedOrder.cancelReason && (
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 10 }}>
+                        Lý do hủy: <strong style={{ color: 'var(--text-main)' }}>{selectedOrder.cancelReason}</strong>
+                      </p>
+                    )}
+
+                    <div className="order-detail-actions">
+                      {orderStatusLabelOf(selectedOrder) === 'Chờ xác nhận' ? (
+                        <button
+                          type="button"
+                          className="btn btn-danger-outline"
+                          onClick={() => {
+                            setCancelTarget(selectedOrder);
+                            setCancelReasonChoice('Đổi ý, không muốn mua nữa');
+                            setCancelReasonText('');
+                            setCancelError(null);
+                          }}
+                          data-testid="cancel-order-btn"
+                        >
+                          Hủy đơn hàng
+                        </button>
+                      ) : (orderStatusLabelOf(selectedOrder) === 'Đang chuẩn bị' || orderStatusLabelOf(selectedOrder) === 'Đang giao') ? (
+                        <p className="order-support-note" data-testid="order-support-note">
+                          Đơn hàng đang được xử lý/vận chuyển nên không thể hủy trực tuyến. Vui lòng liên hệ hỗ trợ
+                        </p>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setSelectedOrder(null)}
+                      >
+                        Đóng chi tiết
+                      </button>
+                    </div>
+                    {orderDetailLoading && (
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 8 }}>Đang tải chi tiết mới nhất…</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Hộp xác nhận hủy đơn (CN-08.3) */}
+                {cancelTarget && (
+                  <div className="modal-overlay" onClick={() => !cancelBusy && setCancelTarget(null)}>
+                    <div className="modal-content cancel-dialog" onClick={e => e.stopPropagation()} data-testid="cancel-order-dialog">
+                      <div className="modal-header">
+                        <h2 className="modal-title" style={{ margin: 0 }}>
+                          Hủy đơn {cancelTarget.orderDisplayCode || `#${cancelTarget.orderCode}`}?
+                        </h2>
+                        <button className="close-btn" onClick={() => setCancelTarget(null)} disabled={cancelBusy} title="Đóng">
+                          <X size={20} />
+                        </button>
+                      </div>
+                      <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: 1.55, marginBottom: 14 }}>
+                        Đơn hàng sẽ bị hủy và số lượng sản phẩm được hoàn về kho. Thao tác này không thể hoàn tác.
+                      </p>
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="cancel-reason-select">Lý do hủy đơn</label>
+                        <select
+                          id="cancel-reason-select"
+                          className="form-input"
+                          value={cancelReasonChoice}
+                          onChange={e => setCancelReasonChoice(e.target.value)}
+                          data-testid="cancel-reason-select"
+                        >
+                          <option value="Đổi ý, không muốn mua nữa">Đổi ý, không muốn mua nữa</option>
+                          <option value="Đặt nhầm sản phẩm">Đặt nhầm sản phẩm</option>
+                          <option value="Tìm được giá tốt hơn">Tìm được giá tốt hơn</option>
+                          <option value="Thời gian giao hàng quá lâu">Thời gian giao hàng quá lâu</option>
+                          <option value="Khác">Khác</option>
+                        </select>
+                      </div>
+                      {cancelReasonChoice === 'Khác' && (
+                        <div className="form-group">
+                          <label className="form-label" htmlFor="cancel-reason-input">Nhập lý do của bạn</label>
+                          <input
+                            id="cancel-reason-input"
+                            className="form-input"
+                            value={cancelReasonText}
+                            onChange={e => setCancelReasonText(e.target.value)}
+                            placeholder="Ví dụ: Tôi muốn đổi sang sản phẩm khác"
+                            data-testid="cancel-reason-input"
+                          />
+                        </div>
+                      )}
+                      {cancelError && (
+                        <div style={{ color: '#e40046', fontSize: '0.85rem', marginBottom: 12 }}>{cancelError}</div>
+                      )}
+                      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => setCancelTarget(null)}
+                          disabled={cancelBusy}
+                          data-testid="cancel-cancel-btn"
+                        >
+                          Không hủy nữa
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={handleCancelOrder}
+                          disabled={cancelBusy}
+                          data-testid="cancel-confirm-btn"
+                        >
+                          {cancelBusy ? 'Đang hủy đơn...' : 'Xác nhận hủy đơn'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </section>
@@ -1868,7 +2435,7 @@ export default function App() {
         />
 
         {/* ============================================================== */}
-        {/* ROUTE VIEW: SHIPPING ADDRESS & PROFILE (/profile) */}
+        {/* ROUTE VIEW: PROFILE (/profile) — CN-03 */}
         {/* ============================================================== */}
         <Route
           path="/profile"
@@ -1889,7 +2456,7 @@ export default function App() {
                         <ArrowLeft size={16} /> Trang chủ
                       </button>
                       <h1 className="page-title" style={{ margin: 0 }}>
-                        <MapPin size={26} color="var(--primary)" /> Địa Chỉ & Thông Tin Nhận Hàng
+                        <UserIcon size={26} color="var(--primary)" /> Tài khoản của tôi
                       </h1>
                     </div>
                   </div>
@@ -1900,7 +2467,7 @@ export default function App() {
                     onClick={() => navigateTo('orders')}
                     style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}
                   >
-                    <Package size={15} /> Xem lịch sử đơn mua ({orderHistory.length})
+                    <Package size={15} /> Xem đơn hàng của tôi ({orderHistory.length})
                   </button>
                 </div>
 
@@ -1913,14 +2480,14 @@ export default function App() {
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>
-                          {profileFullName || user?.fullName || 'Thông tin người nhận'}
+                          {profileFullName || user?.fullName || 'Thông tin tài khoản'}
                         </h3>
                         <span className="brand-badge" style={{ fontSize: '0.75rem' }}>
                           {user?.role || 'Khách hàng'}
                         </span>
                       </div>
                       <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '4px 0 0' }}>
-                        {profileEmail || user?.email || 'Chưa liên kết email'} • Sổ địa chỉ giao hàng
+                        {profileEmail || user?.email || 'Chưa liên kết email'} • Hồ sơ, mật khẩu & sổ địa chỉ
                       </p>
                     </div>
 
@@ -1936,84 +2503,270 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Address Configuration Form */}
-                  <form onSubmit={handleSaveProfile}>
+                  {/* Form hồ sơ (CN-03.1) */}
+                  <form onSubmit={handleSaveProfile} noValidate data-testid="profile-form">
+                    <h3 className="profile-section-title">Thông tin cá nhân</h3>
                     <div className="address-form-grid">
                       <div className="form-group">
-                        <label className="form-label">Họ và tên người nhận hàng</label>
+                        <label className="form-label" htmlFor="profile-name">Họ và tên</label>
                         <input
+                          id="profile-name"
                           className="form-input"
+                          data-testid="profile-name-input"
                           value={profileFullName}
-                          onChange={e => setProfileFullName(e.target.value)}
+                          onChange={e => {
+                            setProfileFullName(e.target.value);
+                            setProfileNameError(null);
+                            setProfileSuccess(false);
+                          }}
                           placeholder="Nguyễn Văn A"
-                          required
+                          style={profileNameError ? { borderColor: '#e40046' } : {}}
                         />
+                        {profileNameError && (
+                          <div data-testid="profile-name-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                            {profileNameError}
+                          </div>
+                        )}
                       </div>
 
                       <div className="form-group">
-                        <label className="form-label">Số điện thoại liên hệ</label>
+                        <label className="form-label" htmlFor="profile-phone">Số điện thoại</label>
                         <input
+                          id="profile-phone"
                           className="form-input"
+                          data-testid="profile-phone-input"
                           value={profilePhone}
-                          onChange={e => setProfilePhone(e.target.value)}
+                          onChange={e => {
+                            setProfilePhone(e.target.value);
+                            setProfilePhoneError(null);
+                            setProfileSuccess(false);
+                          }}
                           placeholder="0987654321"
-                          required
+                          style={profilePhoneError ? { borderColor: '#e40046' } : {}}
                         />
+                        {profilePhoneError && (
+                          <div data-testid="profile-phone-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                            {profilePhoneError}
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     <div className="form-group">
-                      <label className="form-label">Email nhận hóa đơn & thông báo</label>
+                      <label className="form-label" htmlFor="profile-email">Email đăng nhập (không thể thay đổi)</label>
                       <input
+                        id="profile-email"
                         className="form-input"
                         type="email"
+                        data-testid="profile-email-input"
                         value={profileEmail}
-                        onChange={e => setProfileEmail(e.target.value)}
-                        placeholder="name@example.com"
-                        required
+                        disabled
+                        readOnly
                       />
                     </div>
 
-                    <div className="form-group">
-                      <label className="form-label">Địa chỉ giao hàng chi tiết (Số nhà, đường, phường/xã, quận/huyện, tỉnh/thành)</label>
-                      <input
-                        className="form-input"
-                        value={profileAddress}
-                        onChange={e => setProfileAddress(e.target.value)}
-                        placeholder="Số 1 Đại Cồ Việt, Hai Bà Trưng, Hà Nội"
-                        required
-                      />
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">Ghi chú giao hàng mặc định</label>
-                      <textarea
-                        className="form-input"
-                        rows={2}
-                        value={profileNotes}
-                        onChange={e => setProfileNotes(e.target.value)}
-                        placeholder="Ví dụ: Giao giờ hành chính, gọi điện trước khi giao..."
-                      />
-                    </div>
+                    {profileSuccess && (
+                      <div
+                        data-testid="profile-success-msg"
+                        style={{ background: 'rgba(22, 163, 74, 0.1)', border: '1px solid #16a34a', borderRadius: 8, padding: '10px 14px', fontSize: '0.87rem', marginTop: 6 }}
+                      >
+                        Cập nhật thành công
+                      </div>
+                    )}
 
                     <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--border-subtle)' }}>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => navigateTo('home')}
-                      >
-                        Hủy bỏ
-                      </button>
                       <button
                         type="submit"
                         className="btn btn-primary"
                         style={{ padding: '12px 28px', display: 'flex', alignItems: 'center', gap: 8 }}
                         disabled={savingProfile}
+                        data-testid="profile-save-btn"
                       >
-                        <Check size={16} /> {savingProfile ? 'Đang lưu vào hệ thống...' : 'Lưu thông tin địa chỉ'}
+                        <Check size={16} /> {savingProfile ? 'Đang lưu...' : 'Lưu thay đổi'}
                       </button>
                     </div>
                   </form>
+
+                  {/* Đổi mật khẩu (CN-03.2) — chỉ khi tài khoản có mật khẩu */}
+                  {user && user.hasPassword !== false && (
+                    <form
+                      onSubmit={handleChangePassword}
+                      noValidate
+                      data-testid="change-password-form"
+                      style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--border-subtle)' }}
+                    >
+                      <h3 className="profile-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <ShieldCheck size={17} color="var(--primary)" /> Đổi mật khẩu
+                      </h3>
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="cp-current">Mật khẩu hiện tại</label>
+                        <input
+                          id="cp-current"
+                          className="form-input"
+                          type="password"
+                          data-testid="change-password-current-input"
+                          value={cpCurrent}
+                          onChange={e => {
+                            setCpCurrent(e.target.value);
+                            setCpErrors(prev => ({ ...prev, current: undefined }));
+                            setCpSuccess(false);
+                          }}
+                          style={cpErrors.current ? { borderColor: '#e40046' } : {}}
+                        />
+                        {cpErrors.current && (
+                          <div data-testid="change-password-current-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                            {cpErrors.current}
+                          </div>
+                        )}
+                      </div>
+                      <div className="address-form-grid">
+                        <div className="form-group">
+                          <label className="form-label" htmlFor="cp-new">Mật khẩu mới</label>
+                          <input
+                            id="cp-new"
+                            className="form-input"
+                            type="password"
+                            data-testid="change-password-new-input"
+                            value={cpNew}
+                            onChange={e => {
+                              setCpNew(e.target.value);
+                              setCpErrors(prev => ({ ...prev, next: undefined }));
+                              setCpSuccess(false);
+                            }}
+                            placeholder="Tối thiểu 8 ký tự, gồm chữ hoa & ký tự đặc biệt"
+                            style={cpErrors.next ? { borderColor: '#e40046' } : {}}
+                          />
+                          <PasswordRuleList password={cpNew} testIdPrefix="change-password" />
+                          {cpErrors.next && (
+                            <div data-testid="change-password-new-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                              {cpErrors.next}
+                            </div>
+                          )}
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label" htmlFor="cp-confirm">Nhập lại mật khẩu mới</label>
+                          <input
+                            id="cp-confirm"
+                            className="form-input"
+                            type="password"
+                            data-testid="change-password-confirm-input"
+                            value={cpConfirm}
+                            onChange={e => {
+                              setCpConfirm(e.target.value);
+                              setCpErrors(prev => ({ ...prev, confirm: undefined }));
+                              setCpSuccess(false);
+                            }}
+                            placeholder="Nhập lại mật khẩu mới để xác nhận"
+                            style={cpErrors.confirm ? { borderColor: '#e40046' } : {}}
+                          />
+                          {cpErrors.confirm && (
+                            <div data-testid="change-password-confirm-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                              {cpErrors.confirm}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {cpSuccess && (
+                        <div
+                          data-testid="change-password-success"
+                          style={{ background: 'rgba(22, 163, 74, 0.1)', border: '1px solid #16a34a', borderRadius: 8, padding: '10px 14px', fontSize: '0.87rem', marginTop: 6 }}
+                        >
+                          Đổi mật khẩu thành công
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+                        <button
+                          type="submit"
+                          className="btn btn-primary"
+                          style={{ padding: '11px 24px', display: 'flex', alignItems: 'center', gap: 8 }}
+                          disabled={cpBusy}
+                          data-testid="change-password-submit-btn"
+                        >
+                          <Check size={16} /> {cpBusy ? 'Đang đổi mật khẩu...' : 'Đổi mật khẩu'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* Đặt mật khẩu — chỉ hiện khi tài khoản (social) chưa có mật khẩu */}
+                  {user && !setPasswordDone && (user.hasPassword === false || (user.hasPassword === undefined && !!user.authProvider)) && (
+                    <form
+                      onSubmit={handleSetPassword}
+                      noValidate
+                      data-testid="set-password-form"
+                      style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--border-subtle)' }}
+                    >
+                      <h3 className="profile-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <ShieldCheck size={17} color="var(--primary)" /> Đặt mật khẩu
+                      </h3>
+                      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0 0 16px', lineHeight: 1.5 }}>
+                        Tài khoản của bạn được tạo bằng {user.authProvider || 'mạng xã hội'} và chưa có mật khẩu.
+                        Đặt mật khẩu để có thể đăng nhập bằng cả hai cách.
+                      </p>
+                      <div className="address-form-grid">
+                        <div className="form-group">
+                          <label className="form-label">Mật khẩu mới</label>
+                          <input
+                            className="form-input"
+                            type="password"
+                            data-testid="set-password-input"
+                            value={setPasswordValue}
+                            onChange={e => {
+                              setSetPasswordValue(e.target.value);
+                              if (setPasswordError) setSetPasswordError(null);
+                            }}
+                            placeholder="Tối thiểu 8 ký tự, gồm chữ hoa & ký tự đặc biệt"
+                          />
+                          <PasswordRuleList password={setPasswordValue} testIdPrefix="set-password" />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Nhập lại mật khẩu</label>
+                          <input
+                            className="form-input"
+                            type="password"
+                            data-testid="set-password-confirm-input"
+                            value={setPasswordConfirm}
+                            onChange={e => {
+                              setSetPasswordConfirm(e.target.value);
+                              if (setPasswordError) setSetPasswordError(null);
+                            }}
+                            placeholder="Nhập lại mật khẩu để xác nhận"
+                          />
+                        </div>
+                      </div>
+                      {setPasswordError && (
+                        <div data-testid="set-password-error" style={{ color: '#e40046', fontSize: '0.82rem', marginTop: 8 }}>
+                          {setPasswordError}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+                        <button
+                          type="submit"
+                          className="btn btn-primary"
+                          style={{ padding: '11px 24px', display: 'flex', alignItems: 'center', gap: 8 }}
+                          disabled={settingPassword}
+                          data-testid="set-password-submit-btn"
+                        >
+                          <Check size={16} /> {settingPassword ? 'Đang đặt mật khẩu...' : 'Đặt mật khẩu'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                  {user && setPasswordDone && (
+                    <div
+                      data-testid="set-password-success"
+                      style={{ marginTop: 26, padding: '12px 14px', border: '1px solid #10b981', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 10, fontSize: '0.87rem' }}
+                    >
+                      Đã đặt mật khẩu thành công — từ nay bạn đăng nhập được bằng email + mật khẩu hoặc {user.authProvider || 'mạng xã hội'}.
+                    </div>
+                  )}
+
+                  {/* Sổ địa chỉ (CN-03.3) */}
+                  {user && (
+                    <div style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--border-subtle)' }}>
+                      <AddressBook />
+                    </div>
+                  )}
                 </div>
               </section>
             )
@@ -2021,7 +2774,7 @@ export default function App() {
         />
 
         {/* ============================================================== */}
-        {/* ROUTE VIEW: PRODUCT DETAIL (/product/:id) */}
+        {/* ROUTE VIEW: PRODUCT DETAIL (/product/:id) — CN-05 */}
         {/* ============================================================== */}
         <Route
           path="/product/:id"
@@ -2050,10 +2803,13 @@ export default function App() {
                     <RefreshCw size={32} className="spin" style={{ margin: '0 auto 12px', color: 'var(--primary)' }} />
                     <p>Đang tải thông tin chi tiết sản phẩm...</p>
                   </div>
-                ) : !selectedProduct ? (
-                  <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                ) : productNotFound || !selectedProduct ? (
+                  <div style={{ textAlign: 'center', padding: '60px 0' }} data-testid="product-not-found-page">
                     <Package size={48} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
-                    <h3 style={{ fontSize: '1.2rem', marginBottom: 8 }}>Không tìm thấy sản phẩm</h3>
+                    <h3 style={{ fontSize: '1.2rem', marginBottom: 8 }}>404 - Không tìm thấy sản phẩm</h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                      Sản phẩm không tồn tại hoặc đã ngừng bán.
+                    </p>
                     <button type="button" className="btn btn-primary" onClick={() => navigateTo('home')} style={{ marginTop: 12 }}>
                       Quay lại trang chủ
                     </button>
@@ -2084,24 +2840,6 @@ export default function App() {
 
                       <div>
                         <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: 8, color: 'var(--text-main)' }}>{selectedProduct.name}</h2>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                          <div className="star-rating">
-                            {[1, 2, 3, 4, 5].map(st => (
-                              <Star
-                                key={st}
-                                size={16}
-                                fill={st <= Math.round(selectedProduct.rating || 5) ? '#f59e0b' : 'transparent'}
-                                color="#f59e0b"
-                              />
-                            ))}
-                          </div>
-                          <span style={{ fontSize: '0.9rem', color: '#f59e0b', fontWeight: 700 }}>
-                            {selectedProduct.rating ? selectedProduct.rating.toFixed(1) : '5.0'} / 5.0
-                          </span>
-                          <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>
-                            ({selectedProduct.reviewCount || selectedProduct.evaluations?.length || 0} đánh giá)
-                          </span>
-                        </div>
 
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
                           <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#e40046' }}>
@@ -2123,21 +2861,59 @@ export default function App() {
                           {selectedProduct.description}
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-                          <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Số lượng:</span>
-                          <div className="cart-item-actions">
-                            <button className="qty-btn" onClick={() => setDetailQuantity(Math.max(1, detailQuantity - 1))}>
-                              <Minus size={14} />
-                            </button>
-                            <span style={{ minWidth: 24, textAlign: 'center', fontWeight: 700 }}>{detailQuantity}</span>
-                            <button className="qty-btn" onClick={() => setDetailQuantity(detailQuantity + 1)}>
-                              <Plus size={14} />
-                            </button>
-                          </div>
-                          <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
-                            (Còn {selectedProduct.availableStock} sản phẩm có sẵn)
-                          </span>
+                        {/* Biến thể: BE hiện có một biến thể duy nhất cho mỗi sản phẩm (chính sản phẩm). */}
+                        <div style={{ marginBottom: 18 }}>
+                          <span style={{ fontSize: '0.9rem', fontWeight: 600, display: 'block', marginBottom: 8 }}>Biến thể:</span>
+                          <button
+                            type="button"
+                            className="variant-option active"
+                            data-testid={`variant-option-${selectedProduct.id}`}
+                            disabled={selectedProduct.availableStock <= 0}
+                          >
+                            Mặc định
+                          </button>
                         </div>
+
+                        {selectedProduct.availableStock <= 0 ? (
+                          <div
+                            data-testid="detail-out-of-stock-notice"
+                            style={{ background: 'rgba(228, 0, 70, 0.08)', border: '1px solid rgba(228, 0, 70, 0.3)', color: '#b91c1c', borderRadius: 8, padding: '10px 14px', fontSize: '0.88rem', marginBottom: 20 }}
+                          >
+                            Sản phẩm đã hết hàng — hiện không thể thêm vào giỏ hoặc mua ngay.
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
+                            <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Số lượng:</span>
+                            <div className="cart-item-actions">
+                              <button
+                                type="button"
+                                className="qty-btn"
+                                onClick={() => setDetailQuantity(q => Math.max(1, q - 1))}
+                                disabled={detailQuantity <= 1}
+                                data-testid="detail-qty-minus"
+                                title="Giảm số lượng"
+                              >
+                                <Minus size={14} />
+                              </button>
+                              <span style={{ minWidth: 24, textAlign: 'center', fontWeight: 700 }} data-testid="detail-qty-value">
+                                {detailQuantity}
+                              </span>
+                              <button
+                                type="button"
+                                className="qty-btn"
+                                onClick={() => setDetailQuantity(q => Math.min(selectedProduct.availableStock, q + 1))}
+                                disabled={detailQuantity >= selectedProduct.availableStock}
+                                data-testid="detail-qty-plus"
+                                title="Tăng số lượng"
+                              >
+                                <Plus size={14} />
+                              </button>
+                            </div>
+                            <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
+                              (Còn {selectedProduct.availableStock} sản phẩm có sẵn)
+                            </span>
+                          </div>
+                        )}
 
                         <div style={{ display: 'flex', gap: 12 }}>
                           <button
@@ -2146,6 +2922,8 @@ export default function App() {
                             onClick={() => {
                               addToCart(selectedProduct, detailQuantity);
                             }}
+                            disabled={selectedProduct.availableStock <= 0}
+                            data-testid="detail-add-to-cart-btn"
                           >
                             <Plus size={16} /> Thêm vào giỏ hàng
                           </button>
@@ -2155,6 +2933,8 @@ export default function App() {
                             onClick={() => {
                               handleBuyNow(selectedProduct, detailQuantity);
                             }}
+                            disabled={selectedProduct.availableStock <= 0}
+                            data-testid="buy-now-btn"
                           >
                             Mua ngay
                           </button>
@@ -2162,27 +2942,11 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Detail Tabs Header */}
-                    <div className="detail-tabs-header" style={{ marginTop: 24 }}>
-                      <button
-                        className={`detail-tab-btn ${modalTab === 'description' ? 'active' : ''}`}
-                        onClick={() => setModalTab('description')}
-                      >
-                        <FileText size={17} /> Mô tả & Thông số chi tiết
-                      </button>
-                      <button
-                        className={`detail-tab-btn ${modalTab === 'reviews' ? 'active' : ''}`}
-                        onClick={() => setModalTab('reviews')}
-                      >
-                        <Star size={17} /> Đánh giá từ khách hàng ({selectedProduct.evaluations?.length || 0})
-                      </button>
-                    </div>
-
-                    {/* TAB 1: Mô tả chi tiết & Thông số sản phẩm */}
-                    {modalTab === 'description' && (() => {
+                    {/* Mô tả & thông số chi tiết (đánh giá ngoài phạm vi CN — không hiển thị) */}
+                    {(() => {
                       const extra = getProductDetailExtra(selectedProduct);
                       return (
-                        <div className="product-detail-expanded" style={{ marginTop: 10 }}>
+                        <div className="product-detail-expanded" style={{ marginTop: 24 }}>
                           <div className="detail-section">
                             <h4 className="detail-section-title">
                               <Sparkles size={18} color="var(--primary)" /> Đặc điểm nổi bật
@@ -2272,91 +3036,6 @@ export default function App() {
                         </div>
                       );
                     })()}
-
-                    {/* TAB 2: Đánh giá từ khách hàng */}
-                    {modalTab === 'reviews' && (
-                      <div className="evaluations-container">
-                        <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: 16 }}>
-                          Đánh giá từ khách hàng ({selectedProduct.evaluations?.length || 0})
-                        </h3>
-
-                        <form onSubmit={handleAddReview} style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)', padding: 16, borderRadius: 12, marginBottom: 20 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                            <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Để lại đánh giá của bạn:</span>
-                            <div className="star-picker">
-                              {[1, 2, 3, 4, 5].map(st => (
-                                <Star
-                                  key={st}
-                                  size={20}
-                                  fill={st <= reviewRating ? '#f59e0b' : 'transparent'}
-                                  color="#f59e0b"
-                                  onClick={() => setReviewRating(st)}
-                                />
-                              ))}
-                            </div>
-                          </div>
-
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10, marginBottom: 10 }}>
-                            <input
-                              className="form-input"
-                              placeholder="Tên của bạn..."
-                              value={reviewAuthor}
-                              onChange={e => setReviewAuthor(e.target.value)}
-                              required
-                            />
-                            <input
-                              className="form-input"
-                              placeholder="Cảm nhận của bạn về sản phẩm..."
-                              value={reviewComment}
-                              onChange={e => setReviewComment(e.target.value)}
-                              required
-                            />
-                          </div>
-
-                          <button
-                            type="submit"
-                            className="btn btn-primary"
-                            style={{ padding: '8px 16px', fontSize: '0.8rem', marginLeft: 'auto', display: 'flex' }}
-                            disabled={submittingReview}
-                          >
-                            <Send size={14} /> {submittingReview ? 'Đang gửi...' : 'Gửi đánh giá'}
-                          </button>
-                        </form>
-
-                        {selectedProduct.evaluations && selectedProduct.evaluations.length > 0 ? (
-                          selectedProduct.evaluations.map(ev => (
-                            <div key={ev.id} className="evaluation-card">
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#e40046', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700 }}>
-                                    {ev.userName.charAt(0)}
-                                  </div>
-                                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{ev.userName}</span>
-                                </div>
-                                <div className="star-rating">
-                                  {[1, 2, 3, 4, 5].map(st => (
-                                    <Star
-                                      key={st}
-                                      size={13}
-                                      fill={st <= ev.rating ? '#f59e0b' : 'transparent'}
-                                      color="#f59e0b"
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                              <p style={{ fontSize: '0.85rem', color: 'var(--text-main)', lineHeight: 1.5 }}>{ev.comment}</p>
-                              <span style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: 4, display: 'block' }}>
-                                {new Date(ev.createdAt).toLocaleDateString('vi-VN')}
-                              </span>
-                            </div>
-                          ))
-                        ) : (
-                          <p style={{ color: '#9ca3af', fontSize: '0.85rem', textAlign: 'center', padding: '16px 0' }}>
-                            Chưa có đánh giá nào cho sản phẩm này. Hãy là người đầu tiên đánh giá!
-                          </p>
-                        )}
-                      </div>
-                    )}
                   </>
                 )}
               </div>
@@ -2381,6 +3060,7 @@ export default function App() {
               appliedVoucher={appliedVoucher}
               voucherMessage={voucherMessage}
               rawSubTotal={rawSubTotal}
+              shippingFee={shippingFeeEstimate}
               finalTotal={finalTotal}
               totalItemCount={totalItemCount}
               customerName={customerName}
@@ -2395,7 +3075,12 @@ export default function App() {
               isCheckingOut={isCheckingOut}
               orderStatus={orderStatus}
               timeLeft={timeLeft}
+              checkoutError={checkoutError}
+              priceChangedPending={showPriceChangedNotice}
+              lastOrderAddress={lastOrderAddress}
               onUpdateQuantity={updateQuantity}
+              onSetQuantity={(productId, qty) => { void setCartQuantity(productId, qty); }}
+              onRemoveItem={(productId) => { void removeCartItem(productId); }}
               onApplyVoucher={handleApplyVoucher}
               onRemoveVoucher={() => { setAppliedVoucher(null); setVoucherMessage(null); }}
               onCheckout={handleCheckout}
@@ -2429,6 +3114,7 @@ export default function App() {
               authTab="login"
               setAuthTab={(tab) => {
                 setAuthTab(tab);
+                clearAuthErrors();
                 navigateTo(tab);
               }}
             />
@@ -2445,6 +3131,7 @@ export default function App() {
               authTab="register"
               setAuthTab={(tab) => {
                 setAuthTab(tab);
+                clearAuthErrors();
                 navigateTo(tab);
               }}
             />
@@ -2495,7 +3182,7 @@ export default function App() {
                         <div className="payos-summary-bar">
                           <div>
                             <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)' }}>Mã đơn: </span>
-                            <strong style={{ fontSize: '1.1rem' }}>#{orderCodeNum}</strong>
+                            <strong style={{ fontSize: '1.1rem' }}>{order?.orderDisplayCode || `#${orderCodeNum}`}</strong>
                             <span style={{ margin: '0 8px', color: 'var(--border-subtle)' }}>|</span>
                             <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)' }}>Tổng thanh toán: </span>
                             <strong style={{ color: '#e40046', fontSize: '1.25rem' }}>{formatPrice(totalAmt)}</strong>
@@ -2566,21 +3253,6 @@ export default function App() {
       </Routes>
 
       {!isStandalone && <SiteFooter />}
-
-      {/* Auth gate overlay: giữ nguyên trang hiện tại, đóng modal sẽ hủy pendingAdd */}
-      {isAuthModalOpen && location.pathname !== '/login' && location.pathname !== '/register' && (
-        <AuthModal
-          {...commonAuthProps}
-          isOpen={true}
-          isModal={true}
-          onClose={handleAuthClose}
-          authTab={authTab}
-          setAuthTab={(tab) => {
-            setAuthTab(tab);
-            setAuthError(null);
-          }}
-        />
-      )}
 
       {/* ============================================================== */}
       {/* MODAL: NOTIFICATIONS MODAL */}

@@ -26,9 +26,11 @@ public class ReservationCleanupWorker : BackgroundService
                 var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
                 var now = DateTime.UtcNow;
+                // Chỉ đơn PayOS mới có giữ chỗ kho 15 phút. Đơn COD ở trạng thái Pending là
+                // "Chờ xác nhận" (đã trừ kho thật) — tuyệt đối không được hết hạn ở đây.
                 var expiredOrders = await context.Orders
                     .Include(o => o.Items)
-                    .Where(o => o.Status == OrderStatus.Pending && o.ExpiresAt <= now)
+                    .Where(o => o.Status == OrderStatus.Pending && o.PaymentMethod == "PayOS" && o.ExpiresAt <= now)
                     .ToListAsync(stoppingToken);
 
                 if (expiredOrders.Any())

@@ -67,6 +67,11 @@ public class ApplyVoucherCommandHandler : IRequestHandler<ApplyVoucherCommand, A
             return ApiResponse<ApplyVoucherResultDto>.Fail($"Đơn hàng tối thiểu cần đạt {voucher.MinOrderAmount:N0}đ để áp dụng mã {voucher.Code}.");
         }
 
+        if (voucher.MaxUses.HasValue && voucher.UsedCount >= voucher.MaxUses.Value)
+        {
+            return ApiResponse<ApplyVoucherResultDto>.Fail("Mã giảm giá đã hết lượt sử dụng.");
+        }
+
         decimal discountAmount = 0;
         if (voucher.Code == "FORDEV")
         {

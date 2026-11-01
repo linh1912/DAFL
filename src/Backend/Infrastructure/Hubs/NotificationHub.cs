@@ -1,6 +1,5 @@
-using DAFL.Backend.Infrastructure.Data;
+using DAFL.Backend.Infrastructure.Auth;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
 
 namespace DAFL.Backend.Infrastructure.Hubs;
 
@@ -19,12 +18,12 @@ public static class NotificationGroups
 public class NotificationHub : Hub<INotificationClient>
 {
     private readonly ILogger<NotificationHub> _logger;
-    private readonly AppDbContext _context;
+    private readonly IJwtService _jwtService;
 
-    public NotificationHub(ILogger<NotificationHub> logger, AppDbContext context)
+    public NotificationHub(ILogger<NotificationHub> logger, IJwtService jwtService)
     {
         _logger = logger;
-        _context = context;
+        _jwtService = jwtService;
     }
 
     public override async Task OnConnectedAsync()
@@ -40,22 +39,18 @@ public class NotificationHub : Hub<INotificationClient>
     }
 
     /// <summary>
-    /// Tham gia nhóm thông báo riêng của người dùng. Phải xuất trình sessionId còn hiệu lực
-    /// (không nhận userId tùy ý từ client để tránh nghe lén thông báo của người khác).
+    /// Tham gia nhóm thông báo riêng của người dùng. Phải xuất trình JWT còn hiệu lực (CN-02)
+    /// — userId được trích từ claim sub đã kiểm chữ ký, không nhận userId tùy ý từ client
+    /// để tránh nghe lén thông báo của người khác.
     /// </summary>
-    public async Task<bool> JoinUserGroup(string sessionId)
+    public async Task<bool> JoinUserGroup(string token)
     {
-        if (string.IsNullOrWhiteSpace(sessionId)) return false;
+        if (string.IsNullOrWhiteSpace(token)) return false;
 
-        var userId = await _context.UserSessions
-            .AsNoTracking()
-            .Where(s => s.SessionId == sessionId && s.ExpiresAt > DateTime.UtcNow && s.UserId != null)
-            .Select(s => s.UserId)
-            .FirstOrDefaultAsync();
-
+        var userId = _jwtService.ValidateToken(token);
         if (userId == null)
         {
-            _logger.LogWarning("Connection {ConnectionId} tried to join a user group with an invalid session", Context.ConnectionId);
+            _logger.LogWarning("Connection {ConnectionId} tried to join a user group with an invalid token", Context.ConnectionId);
             return false;
         }
 

@@ -19,10 +19,17 @@ public record ProductDto(
     double Rating,
     int ReviewCount);
 
-public record ListProductsQuery(Guid? CategoryId = null, string? Search = null, int? Page = null, int? PageSize = null) 
+public record ListProductsQuery(
+    Guid? CategoryId = null,
+    string? Search = null,
+    int? Page = null,
+    int? PageSize = null,
+    decimal? PriceFrom = null,
+    decimal? PriceTo = null,
+    string? Sort = null)
     : IRequest<ApiResponse<List<ProductDto>>>, ICacheableQuery
 {
-    public string CacheKey => $"products:cat={CategoryId}:q={Search?.Trim().ToLowerInvariant()}:p={Page}:s={PageSize}";
+    public string CacheKey => $"products:cat={CategoryId}:q={Search?.Trim().ToLowerInvariant()}:p={Page}:s={PageSize}:pf={PriceFrom}:pt={PriceTo}:sort={Sort}";
     public TimeSpan? Expiration => TimeSpan.FromMinutes(10);
 }
 
@@ -37,9 +44,11 @@ public class ListProductsQueryHandler : IRequestHandler<ListProductsQuery, ApiRe
 
     public async Task<ApiResponse<List<ProductDto>>> Handle(ListProductsQuery request, CancellationToken cancellationToken)
     {
+        // CN-04: sản phẩm ngừng bán (IsActive = false) không hiển thị
         var query = _context.Products
             .AsNoTracking()
             .Include(p => p.Category)
+            .Where(p => p.IsActive)
             .AsQueryable();
 
         if (request.CategoryId.HasValue && request.CategoryId.Value != Guid.Empty)
@@ -49,16 +58,34 @@ public class ListProductsQueryHandler : IRequestHandler<ListProductsQuery, ApiRe
 
         if (!string.IsNullOrWhiteSpace(request.Search))
         {
+            // Tìm theo tên, không phân biệt hoa thường; EF dịch thành truy vấn tham số hóa (chống SQL Injection — CN-04 E3)
             var search = request.Search.Trim().ToLower();
             query = query.Where(p => p.Name.ToLower().Contains(search) || p.Description.ToLower().Contains(search));
         }
 
-        query = query.OrderByDescending(p => p.CreatedAt);
-
-        if (request.Page.HasValue && request.PageSize.HasValue && request.Page.Value > 0 && request.PageSize.Value > 0)
+        // Lọc theo khoảng giá (CN-04)
+        if (request.PriceFrom.HasValue)
         {
-            query = query.Skip((request.Page.Value - 1) * request.PageSize.Value).Take(request.PageSize.Value);
+            query = query.Where(p => p.Price >= request.PriceFrom.Value);
         }
+
+        if (request.PriceTo.HasValue)
+        {
+            query = query.Where(p => p.Price <= request.PriceTo.Value);
+        }
+
+        // Sắp xếp (CN-04): mặc định mới nhất; price-asc = giá tăng dần; price-desc = giá giảm dần
+        query = request.Sort switch
+        {
+            "price-asc" => query.OrderBy(p => p.Price).ThenByDescending(p => p.CreatedAt),
+            "price-desc" => query.OrderByDescending(p => p.Price).ThenByDescending(p => p.CreatedAt),
+            _ => query.OrderByDescending(p => p.CreatedAt)
+        };
+
+        // Phân trang CN-04: mặc định 12 sản phẩm/trang khi client không truyền tham số
+        var page = request.Page.HasValue && request.Page.Value > 0 ? request.Page.Value : 1;
+        var pageSize = request.PageSize.HasValue && request.PageSize.Value > 0 ? request.PageSize.Value : 12;
+        query = query.Skip((page - 1) * pageSize).Take(pageSize);
 
         var products = await query
             .Select(p => new ProductDto(

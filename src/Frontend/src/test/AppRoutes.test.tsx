@@ -151,14 +151,14 @@ describe('App Routing & Navigation System (React Router)', () => {
     });
   });
 
-  it('gates add-to-cart for guests and executes the pending add after login', async () => {
+  it('lets guests add to cart without logging in (CN-06: no login gate)', async () => {
     const product = {
-      id: 'prod-gate',
+      id: 'prod-guest',
       categoryId: 'cat-1',
       categoryName: 'Chăm sóc da',
-      name: 'Serum DAFL Gate',
-      slug: 'serum-dafl-gate',
-      description: 'Serum dùng cho test cổng đăng nhập',
+      name: 'Serum DAFL Guest',
+      slug: 'serum-dafl-guest',
+      description: 'Serum dùng cho test giỏ khách',
       price: 450000,
       originalPrice: 600000,
       availableStock: 10,
@@ -166,26 +166,17 @@ describe('App Routing & Navigation System (React Router)', () => {
       rating: 5,
       reviewCount: 12,
     };
-    const authUser = {
-      id: 'user-gate',
-      email: 'demo@dafl.vn',
-      fullName: 'Người dùng Gate',
-      phoneNumber: '0987654321',
-      address: 'Hà Nội',
-      role: 'Customer',
-      sessionId: 'session-gate',
-    };
     const respond = (body: unknown) => Promise.resolve({
       json: () => Promise.resolve(body),
     } as Response);
 
     globalThis.fetch = vi.fn((url: any) => {
       const urlStr = typeof url === 'string' ? url : url.url;
-      if (urlStr.includes('/api/auth/login')) return respond({ success: true, data: authUser });
       if (urlStr.includes('/api/auth/me')) return respond({ success: false, data: null });
       if (urlStr.includes('/api/categories')) {
         return respond({ success: true, data: [{ id: 'cat-1', name: 'Chăm sóc da', slug: 'cham-soc-da' }] });
       }
+      if (urlStr.includes('/api/products/prod-guest')) return respond({ success: true, data: product });
       if (urlStr.includes('/api/products')) return respond({ success: true, data: [product] });
       if (urlStr.includes('/api/vouchers')) return respond({ success: true, data: [] });
       if (urlStr.includes('/api/notifications')) return respond({ success: true, data: [] });
@@ -198,31 +189,34 @@ describe('App Routing & Navigation System (React Router)', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(await screen.findByTestId('add-to-cart-btn-prod-gate'));
-    expect(await screen.findByTestId('auth-required-notice')).toHaveTextContent('Bạn chưa đăng nhập');
-    expect(screen.queryByTestId('cart-badge-count')).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId('add-to-cart-btn-prod-guest'));
 
-    fireEvent.change(screen.getByTestId('login-email-input'), {
-      target: { value: 'demo@dafl.vn' },
-    });
-    fireEvent.change(screen.getByTestId('login-password-input'), {
-      target: { value: 'Password123!' },
-    });
-    fireEvent.click(screen.getByTestId('login-submit-btn'));
-
-    expect(await screen.findByTestId('cart-drawer')).toBeInTheDocument();
-    expect(await screen.findByText('Serum DAFL Gate')).toBeInTheDocument();
+    // Toast xác nhận + badge tăng, KHÔNG hề mở màn hình đăng nhập.
+    expect(await screen.findByTestId('cart-added-toast', {}, { timeout: 5000 })).toHaveTextContent('Đã thêm vào giỏ hàng');
     expect(screen.getByTestId('cart-badge-count')).toHaveTextContent('1');
+    expect(screen.queryByTestId('auth-modal')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('auth-required-notice')).not.toBeInTheDocument();
+
+    // Giỏ khách được lưu ở localStorage.
+    const stored = JSON.parse(localStorage.getItem('dafl_guest_cart') || '[]');
+    expect(stored).toHaveLength(1);
+    expect(stored[0].product.id).toBe('prod-guest');
+    expect(stored[0].quantity).toBe(1);
+
+    // Mở giỏ thấy sản phẩm, vẫn ở trạng thái khách.
+    fireEvent.click(screen.getByTestId('cart-btn'));
+    expect(await screen.findByTestId('cart-drawer')).toBeInTheDocument();
+    expect(screen.getByTestId('cart-item-name-prod-guest')).toHaveTextContent('Serum DAFL Guest');
   });
 
-  it('moves registration to email verification and then executes the pending add', async () => {
+  it('registers without auto-login, then merges the guest cart on login (CN-01.4 + CN-06.6)', async () => {
     const product = {
-      id: 'prod-register-gate',
+      id: 'prod-merge',
       categoryId: 'cat-1',
       categoryName: 'Chăm sóc da',
-      name: 'Kem dưỡng DAFL Gate',
-      slug: 'kem-duong-dafl-gate',
-      description: 'Kem dưỡng dùng cho test xác thực đăng ký',
+      name: 'Kem dưỡng DAFL Merge',
+      slug: 'kem-duong-dafl-merge',
+      description: 'Kem dưỡng dùng cho test merge giỏ',
       price: 320000,
       availableStock: 8,
       imageUrl: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?w=600',
@@ -230,37 +224,59 @@ describe('App Routing & Navigation System (React Router)', () => {
       reviewCount: 9,
     };
     const authUser = {
-      id: 'user-register-gate',
+      id: 'user-merge',
       email: 'new@dafl.vn',
       fullName: 'Người dùng Mới',
       phoneNumber: '0912345678',
-      address: 'Hà Nội, Việt Nam',
+      address: '',
       role: 'Customer',
-      sessionId: 'session-register-gate',
+      sessionId: 'session-merge',
+      hasPassword: true,
+    };
+    const serverCart = {
+      id: 'cart-1',
+      items: [
+        {
+          id: 'ci-1',
+          productId: 'prod-merge',
+          productName: 'Kem dưỡng DAFL Merge',
+          productImageUrl: product.imageUrl,
+          unitPrice: 320000,
+          quantity: 1,
+          subTotal: 320000,
+          availableStock: 8,
+          isAvailable: true,
+        },
+      ],
+      totalQuantity: 1,
+      totalAmount: 320000,
+      notice: null,
     };
     const respond = (body: unknown) => Promise.resolve({
       json: () => Promise.resolve(body),
     } as Response);
 
-    globalThis.fetch = vi.fn((url: any) => {
+    const fetchMock = vi.fn((url: any, init?: any) => {
       const urlStr = typeof url === 'string' ? url : url.url;
       if (urlStr.includes('/api/auth/register')) {
-        return respond({
-          success: true,
-          data: { email: 'new@dafl.vn', requiresVerification: true },
-          message: 'Đã gửi mã xác thực về email của bạn.',
-        });
+        return respond({ success: true, data: { token: 'jwt-register', user: authUser }, message: 'Đăng ký thành công' });
       }
-      if (urlStr.includes('/api/auth/verify-email')) return respond({ success: true, data: authUser });
+      if (urlStr.includes('/api/auth/login')) {
+        return respond({ success: true, data: { token: 'jwt-login', user: authUser } });
+      }
+      if (urlStr.includes('/api/cart/merge')) return respond({ success: true, data: serverCart });
+      if (urlStr.includes('/api/cart')) return respond({ success: true, data: serverCart });
       if (urlStr.includes('/api/auth/me')) return respond({ success: false, data: null });
       if (urlStr.includes('/api/categories')) {
         return respond({ success: true, data: [{ id: 'cat-1', name: 'Chăm sóc da', slug: 'cham-soc-da' }] });
       }
+      if (urlStr.includes('/api/products/prod-merge')) return respond({ success: true, data: product });
       if (urlStr.includes('/api/products')) return respond({ success: true, data: [product] });
       if (urlStr.includes('/api/vouchers')) return respond({ success: true, data: [] });
       if (urlStr.includes('/api/notifications')) return respond({ success: true, data: [] });
       return respond({ success: true, data: [] });
     });
+    globalThis.fetch = fetchMock;
 
     render(
       <MemoryRouter initialEntries={['/']}>
@@ -268,36 +284,44 @@ describe('App Routing & Navigation System (React Router)', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(await screen.findByTestId('add-to-cart-btn-prod-register-gate'));
-    fireEvent.click(await screen.findByTestId('auth-tab-register'));
-    fireEvent.change(screen.getByTestId('register-name-input'), {
-      target: { value: 'Người dùng Mới' },
-    });
-    fireEvent.change(screen.getByTestId('register-email-input'), {
-      target: { value: 'new@dafl.vn' },
-    });
-    fireEvent.change(screen.getByTestId('register-password-input'), {
-      target: { value: 'Password1!' },
-    });
-    fireEvent.change(screen.getByTestId('register-confirm-password-input'), {
-      target: { value: 'Password1!' },
-    });
-    fireEvent.change(screen.getByTestId('register-phone-input'), {
-      target: { value: '0912345678' },
-    });
-    fireEvent.change(screen.getByTestId('register-address-input'), {
-      target: { value: 'Hà Nội, Việt Nam' },
-    });
+    // Khách thêm giỏ trước (không cần đăng nhập).
+    fireEvent.click(await screen.findByTestId('add-to-cart-btn-prod-merge'));
+    expect(await screen.findByTestId('cart-badge-count')).toHaveTextContent('1');
+
+    // Mở menu tài khoản → Đăng nhập / Đăng ký.
+    fireEvent.click(screen.getByTestId('account-toggle-btn'));
+    fireEvent.click(await screen.findByTestId('dropdown-login-btn'));
+    expect(await screen.findByTestId('login-form', {}, { timeout: 5000 })).toBeInTheDocument();
+
+    // Chuyển tab Đăng ký và đăng ký (không còn ô địa chỉ, không còn bước OTP).
+    fireEvent.click(screen.getByTestId('auth-tab-register'));
+    fireEvent.change(screen.getByTestId('register-name-input'), { target: { value: 'Người dùng Mới' } });
+    fireEvent.change(screen.getByTestId('register-email-input'), { target: { value: 'new@dafl.vn' } });
+    fireEvent.change(screen.getByTestId('register-password-input'), { target: { value: 'Password1!' } });
+    fireEvent.change(screen.getByTestId('register-confirm-password-input'), { target: { value: 'Password1!' } });
+    fireEvent.change(screen.getByTestId('register-phone-input'), { target: { value: '0912345678' } });
     fireEvent.click(screen.getByTestId('register-submit-btn'));
 
-    expect(await screen.findByTestId('register-verify-btn')).toBeInTheDocument();
-    const codeInputs = within(screen.getByTestId('register-verify-otp-input')).getAllByRole('textbox');
-    codeInputs.forEach((input, index) => fireEvent.change(input, {
-      target: { value: String(index + 1) },
-    }));
-    fireEvent.click(screen.getByTestId('register-verify-btn'));
+    // Đăng ký thành công → về form Đăng nhập kèm thông báo, CHƯA đăng nhập (không có token dùng được).
+    expect(await screen.findByTestId('register-success-msg', {}, { timeout: 5000 })).toHaveTextContent('Đăng ký thành công');
+    expect(screen.getByTestId('login-form')).toBeInTheDocument();
+    expect(localStorage.getItem('dafl_token')).toBeNull();
 
-    expect(await screen.findByTestId('cart-drawer')).toBeInTheDocument();
-    expect(await screen.findByText('Kem dưỡng DAFL Gate')).toBeInTheDocument();
+    // Đăng nhập → merge giỏ khách vào giỏ server.
+    fireEvent.change(screen.getByTestId('login-password-input'), { target: { value: 'Password1!' } });
+    fireEvent.click(screen.getByTestId('login-submit-btn'));
+
+    await waitFor(() => {
+      const mergeCall = fetchMock.mock.calls.find(([url]: any[]) =>
+        String(typeof url === 'string' ? url : url.url).includes('/api/cart/merge')
+      );
+      expect(mergeCall).toBeTruthy();
+      expect(JSON.parse(mergeCall![1].body)).toEqual({
+        items: [{ productId: 'prod-merge', quantity: 1 }],
+      });
+    });
+    expect(localStorage.getItem('dafl_token')).toBe('jwt-login');
+    expect(localStorage.getItem('dafl_guest_cart')).toBeNull();
+    expect(await screen.findByTestId('cart-badge-count')).toHaveTextContent('1');
   });
 });

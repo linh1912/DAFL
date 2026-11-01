@@ -69,6 +69,7 @@ public class CheckoutHandlerTests : IDisposable
         return new CheckoutCommandHandler(_context, payOs.Object, hub.Object, NullLogger<CheckoutCommandHandler>.Instance, new ConfigurationBuilder().Build());
     }
 
+    // Mặc định PaymentMethod = "COD" (CN-07); hai test PayOS dưới đây ghi đè thành "PayOS"
     private static CheckoutCommand CreateCommand() => new(
         "Nguyen Van A",
         "test@dafl.vn",
@@ -87,7 +88,7 @@ public class CheckoutHandlerTests : IDisposable
         var handler = CreateHandler(new CreatePaymentLinkResponse(
             true, "https://pay.example/checkout", "qr", "0987654321", "DAFL STORE", 970422, "DH", "Success"));
 
-        var result = await handler.Handle(CreateCommand(), CancellationToken.None);
+        var result = await handler.Handle(CreateCommand() with { PaymentMethod = "PayOS" }, CancellationToken.None);
 
         result.Success.Should().BeTrue();
         result.Data!.CheckoutUrl.Should().Be("https://pay.example/checkout");
@@ -104,10 +105,10 @@ public class CheckoutHandlerTests : IDisposable
         var handler = CreateHandler(new CreatePaymentLinkResponse(
             false, null, null, null, null, null, null, "PayOS request failed"));
 
-        var result = await handler.Handle(CreateCommand(), CancellationToken.None);
+        var result = await handler.Handle(CreateCommand() with { PaymentMethod = "PayOS" }, CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.Message.Should().Contain("PayOS request failed");
+        result.Message.Should().Contain("Không thể tạo link thanh toán");
 
         _context.ChangeTracker.Clear();
         (await _context.Orders.CountAsync()).Should().Be(0);
@@ -115,7 +116,8 @@ public class CheckoutHandlerTests : IDisposable
     }
 
     /// <summary>
-    /// TC-CHKH-03: Voucher đã hết hạn không được áp dụng khi checkout (khớp với ApplyVoucher).
+    /// TC-CHKH-03 (O1 — voucher kiểm tra kỹ ở BE): Voucher đã hết hạn → checkout THẤT BẠI toàn bộ
+    /// với thông điệp riêng, không tạo đơn (bản cũ bỏ qua voucher và vẫn tạo đơn — đã sửa theo O1).
     /// </summary>
     [Fact]
     public async Task Handle_WithExpiredVoucher_ShouldNotApplyDiscount()
@@ -137,8 +139,9 @@ public class CheckoutHandlerTests : IDisposable
 
         var result = await handler.Handle(command, CancellationToken.None);
 
-        result.Success.Should().BeTrue();
-        result.Data!.DiscountAmount.Should().Be(0m);
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("hết hạn");
+        (await _context.Orders.CountAsync()).Should().Be(0);
     }
 
     public void Dispose()
