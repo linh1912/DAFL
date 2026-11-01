@@ -1,15 +1,45 @@
 using DAFL.Backend.Common;
 using DAFL.Backend.Features.Auth;
 using DAFL.Backend.Infrastructure.Data;
+using DAFL.Backend.Infrastructure.Email;
 using DAFL.Backend.Infrastructure.Hubs;
 using DAFL.Backend.Infrastructure.Messaging;
 using DAFL.Backend.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Moq;
 
 namespace DAFL.Backend.Tests.Features.Auth;
+
+/// <summary>Email sender giả cho test: chỉ ghi lại thư đã "gửi", không gửi thật.</summary>
+public class FakeEmailSender : IEmailSender
+{
+    public List<(string To, string Subject, string Body)> Sent { get; } = new();
+
+    public Task SendAsync(string to, string subject, string body, CancellationToken cancellationToken = default)
+    {
+        Sent.Add((to, subject, body));
+        return Task.CompletedTask;
+    }
+}
+
+public static class OtpTestFactory
+{
+    /// <summary>
+    /// Tạo OtpService cho test với environment = "Testing"
+    /// → CanExposeDebugCode = true, handler trả debugCode để test đi tiếp happy path (cơ chế mock OTP).
+    /// </summary>
+    public static OtpService CreateOtpService(AppDbContext context, FakeEmailSender? emailSender = null)
+    {
+        var env = new Mock<IHostEnvironment>();
+        env.Setup(e => e.EnvironmentName).Returns("Testing");
+        var config = new ConfigurationBuilder().Build();
+        return new OtpService(context, emailSender ?? new FakeEmailSender(), config, env.Object);
+    }
+}
 
 /// <summary>
 /// Unit tests cho module Authentication.
@@ -22,10 +52,12 @@ public class AuthCommandsTests : IDisposable
     private readonly Mock<IKafkaProducer> _mockKafkaProducer;
     private readonly Mock<IHubContext<NotificationHub, INotificationClient>> _mockHubContext;
     private readonly Mock<INotificationClient> _mockClients;
+    private readonly OtpService _otpService;
 
     public AuthCommandsTests()
     {
         _context = TestDbContextFactory.CreateWithSeedData();
+        _otpService = OtpTestFactory.CreateOtpService(_context);
         _mockKafkaProducer = new Mock<IKafkaProducer>();
         _mockHubContext = new Mock<IHubContext<NotificationHub, INotificationClient>>();
         _mockClients = new Mock<INotificationClient>();
@@ -40,14 +72,15 @@ public class AuthCommandsTests : IDisposable
     #region Register Tests - Positive Path
 
     /// <summary>
-    /// TC-AUTH-01: Đăng ký tài khoản mới với thông tin hợp lệ → Thành công.
-    /// Kiểm tra: user được tạo, session được tạo, notification chào mừng được gửi.
+    /// TC-AUTH-01 (đã cập nhật theo nghiệp vụ v3): Đăng ký hợp lệ → Thành công nhưng
+    /// tài khoản ở trạng thái CHỜ XÁC THỰC (RequiresVerification = true), chưa có session.
+    /// Ở môi trường Testing, response kèm debugCode (mock OTP) để test đi tiếp bước xác thực.
     /// </summary>
     [Fact]
     public async Task Register_WithValidData_ShouldReturnSuccess()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("newuser@dafl.vn", "SecurePass@123", "Nguyen Van A", "0912345678", "456 New Street");
 
         // Act
@@ -56,11 +89,11 @@ public class AuthCommandsTests : IDisposable
         // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
+        result.Message.Should().Contain("Đăng ký thành công");
         result.Data.Should().NotBeNull();
         result.Data!.Email.Should().Be("newuser@dafl.vn");
-        result.Data.FullName.Should().Be("Nguyen Van A");
-        result.Data.Role.Should().Be("Customer");
-        result.Data.SessionId.Should().NotBeNullOrEmpty();
+        result.Data.RequiresVerification.Should().BeTrue();
+        result.Data.DebugCode.Should().NotBeNullOrEmpty(); // Testing env → mock OTP lộ mã
     }
 
     /// <summary>
@@ -70,7 +103,7 @@ public class AuthCommandsTests : IDisposable
     public async Task Register_WithValidData_ShouldPersistUserInDatabase()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("persist@dafl.vn", "Pass@123", "Tran B", null, null);
 
         // Act
@@ -83,22 +116,30 @@ public class AuthCommandsTests : IDisposable
     }
 
     /// <summary>
-    /// TC-AUTH-03: Đăng ký thành công → Session được tạo với thời hạn 7 ngày.
+    /// TC-AUTH-03 (đã cập nhật theo nghiệp vụ v3): Đăng ký thành công → KHÔNG tạo session ngay;
+    /// user ở trạng thái EmailVerified = false và có 1 mã OTP VerifyEmail đang chờ.
+    /// Session chỉ được tạo sau khi xác thực email thành công.
     /// </summary>
     [Fact]
-    public async Task Register_WithValidData_ShouldCreateSessionWith7DaysExpiry()
+    public async Task Register_WithValidData_ShouldNotCreateSessionUntilEmailVerified()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("session@dafl.vn", "Pass@123", "Session User", null, null);
 
         // Act
         var result = await handler.Handle(command, CancellationToken.None);
 
         // Assert
-        var session = await _context.UserSessions.FirstOrDefaultAsync(s => s.SessionId == result.Data!.SessionId);
-        session.Should().NotBeNull();
-        session!.ExpiresAt.Should().BeAfter(DateTime.UtcNow.AddDays(6));
+        result.Success.Should().BeTrue();
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == "session@dafl.vn");
+        user.Should().NotBeNull();
+        user!.EmailVerified.Should().BeFalse();
+        var session = await _context.UserSessions.FirstOrDefaultAsync(s => s.UserId == user.Id);
+        session.Should().BeNull();
+        var otp = await _context.OtpCodes.FirstOrDefaultAsync(o => o.Email == "session@dafl.vn" && o.Purpose == OtpPurposes.VerifyEmail);
+        otp.Should().NotBeNull();
+        otp!.Used.Should().BeFalse();
     }
 
     /// <summary>
@@ -108,7 +149,7 @@ public class AuthCommandsTests : IDisposable
     public async Task Register_WithValidData_ShouldCreateWelcomeNotification()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("welcome@dafl.vn", "Pass@123", "Welcome User", null, null);
 
         // Act
@@ -129,7 +170,7 @@ public class AuthCommandsTests : IDisposable
     public async Task Register_WithValidData_ShouldPublishKafkaEvent()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("kafka@dafl.vn", "Pass@123", "Kafka User", null, null);
 
         // Act
@@ -150,7 +191,7 @@ public class AuthCommandsTests : IDisposable
     public async Task Register_WithUppercaseEmail_ShouldNormalizeToLowercase()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("UPPERCASE@DAFL.VN", "Pass@123", "Upper User", null, null);
 
         // Act
@@ -172,7 +213,7 @@ public class AuthCommandsTests : IDisposable
     public async Task Register_WithDuplicateEmail_ShouldReturnFail()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("test@dafl.vn", "Pass@123", "Duplicate User", null, null);
         // Email "test@dafl.vn" đã tồn tại trong seed data
 
@@ -192,7 +233,7 @@ public class AuthCommandsTests : IDisposable
     public async Task Register_WithPasswordShorterThan8Chars_ShouldReturnFail()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("shortpw@dafl.vn", "Pass@1", "Short Pass User", null, null);
 
         // Act
@@ -210,7 +251,7 @@ public class AuthCommandsTests : IDisposable
     public async Task Register_WithPasswordWithoutUppercase_ShouldReturnFail()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("noupper@dafl.vn", "pass@123", "No Upper User", null, null);
 
         // Act
@@ -228,7 +269,7 @@ public class AuthCommandsTests : IDisposable
     public async Task Register_WithPasswordWithoutSpecialChar_ShouldReturnFail()
     {
         // Arrange
-        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object);
+        var handler = new RegisterCommandHandler(_context, _mockKafkaProducer.Object, _mockHubContext.Object, _otpService);
         var command = new RegisterCommand("nospecial@dafl.vn", "Password123", "No Special User", null, null);
 
         // Act

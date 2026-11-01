@@ -50,7 +50,10 @@ public static class TestDbContextFactory
             PhoneNumber = "0901234567",
             Address = "123 Test Street",
             Role = "Customer",
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            // Nghiệp vụ v3: chỉ tài khoản đã xác thực email mới đăng nhập được → user seed của test phải verified
+            EmailVerified = true,
+            EmailVerifiedAt = DateTime.UtcNow
         };
         context.Users.Add(testUser);
 

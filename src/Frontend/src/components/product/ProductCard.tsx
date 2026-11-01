@@ -39,43 +39,40 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             if (e.currentTarget.src !== IMAGE_PLACEHOLDER) e.currentTarget.src = IMAGE_PLACEHOLDER;
           }}
         />
-        <span className="product-category-badge">{product.categoryName}</span>
         {discountPercent !== null && (
           <span className="product-discount-badge">-{discountPercent}%</span>
         )}
       </div>
       <div className="product-content">
+        <div className="product-brand">{product.categoryName}</div>
         <h3 className="product-name" data-testid={`product-name-${product.id}`}>
           {product.name}
         </h3>
-        <p className="product-desc">{product.description}</p>
 
         <div className="product-meta">
           <span className="product-rating">
-            <Star size={13} fill="#f59e0b" color="#f59e0b" />
+            <Star size={13} fill="#f5a623" color="#f5a623" />
             {product.rating ? product.rating.toFixed(1) : '5.0'}
           </span>
-          <span>•</span>
-          <span>{product.reviewCount || 0} đánh giá</span>
+          <span>({product.reviewCount || 0})</span>
         </div>
 
         <div className="product-footer">
-          <div>
-            <div className="product-price" data-testid={`product-price-${product.id}`}>
+          <div className="product-price-block">
+            <span className="product-price" data-testid={`product-price-${product.id}`}>
               {formatPrice(product.price)}
-            </div>
+            </span>
             {product.originalPrice && (
-              <div className="product-original-price">
+              <span className="product-original-price">
                 {formatPrice(product.originalPrice)}
-              </div>
+              </span>
             )}
-            <div className="product-stock" data-testid={`product-stock-${product.id}`}>
-              {isOutOfStock ? 'Hết hàng' : `Còn ${product.availableStock} sản phẩm`}
-            </div>
+          </div>
+          <div className="product-stock" data-testid={`product-stock-${product.id}`}>
+            {isOutOfStock ? 'Hết hàng' : `Còn ${product.availableStock} sản phẩm`}
           </div>
           <button
-            className="btn btn-primary"
-            style={{ padding: '8px 14px', fontSize: '0.8rem' }}
+            className="btn btn-primary product-add-btn"
             onClick={(e) => {
               e.stopPropagation();
               onAddToCart(product);
@@ -84,7 +81,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             data-testid={`add-to-cart-btn-${product.id}`}
             title={isOutOfStock ? 'Sản phẩm tạm hết hàng' : 'Thêm vào giỏ hàng'}
           >
-            <Plus size={15} /> Thêm
+            <Plus size={15} /> Thêm vào giỏ
           </button>
         </div>
       </div>

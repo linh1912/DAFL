@@ -71,8 +71,7 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
           <span>Không tìm thấy danh mục nào phù hợp với &quot;<strong>{searchTerm}</strong>&quot;</span>
           <button
             type="button"
-            className="category-pill"
-            style={{ marginLeft: 12, padding: '4px 12px' }}
+            className="category-pill category-empty-action"
             onClick={() => setSearchTerm('')}
           >
             Hiển thị tất cả
@@ -94,7 +93,6 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
               onClick={() => onSelectCategory(cat.id)}
               data-testid={`category-pill-${cat.id}`}
             >
-              <span style={{ marginRight: 6 }}>{cat.iconUrl || '📦'}</span>
               {cat.name}
             </button>
           ))}

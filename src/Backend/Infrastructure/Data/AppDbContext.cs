@@ -26,6 +26,14 @@ public class User
     public string Role { get; set; } = "Customer";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    // --- Xác thực email & khóa mềm đăng nhập (Luồng 3/4 - bản chốt v3) ---
+    public bool EmailVerified { get; set; } = false;
+    public DateTime? EmailVerifiedAt { get; set; }
+    public int FailedLoginCount { get; set; } = 0;
+    public DateTime? FailedLoginWindowStart { get; set; }
+    public DateTime? LockedUntil { get; set; }
+    public int LockEscalations { get; set; } = 0;
+
     public List<UserSession> Sessions { get; set; } = new();
     public List<Notification> Notifications { get; set; } = new();
     public List<Order> Orders { get; set; } = new();
@@ -42,6 +50,30 @@ public class UserSession
     public string FullName { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(7);
+}
+
+/// <summary>
+/// Mã OTP dùng chung cho 3 mục đích: xác thực email (VerifyEmail),
+/// đặt lại mật khẩu (ResetPassword) và đăng nhập bằng OTP (OtpLogin).
+/// Mã chỉ lưu dạng băm (SHA-256), dùng 1 lần, sai 5 lần thì bị vô hiệu.
+/// </summary>
+public class OtpCode
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Email { get; set; } = string.Empty;
+    public string CodeHash { get; set; } = string.Empty;
+    public string Purpose { get; set; } = string.Empty; // VerifyEmail | ResetPassword | OtpLogin
+    public DateTime ExpiresAt { get; set; }
+    public int Attempts { get; set; } = 0;
+    public bool Used { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public static class OtpPurposes
+{
+    public const string VerifyEmail = "VerifyEmail";
+    public const string ResetPassword = "ResetPassword";
+    public const string OtpLogin = "OtpLogin";
 }
 
 public class Notification
@@ -217,6 +249,7 @@ public class AppDbContext : DbContext
     // Auth Module DbSets
     public DbSet<User> Users => Set<User>();
     public DbSet<UserSession> UserSessions => Set<UserSession>();
+    public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
     public DbSet<Notification> Notifications => Set<Notification>();
 
     // Shopify Module DbSets
@@ -252,6 +285,14 @@ public class AppDbContext : DbContext
                   .WithMany(u => u.Sessions)
                   .HasForeignKey(us => us.UserId)
                   .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<OtpCode>(entity =>
+        {
+            entity.HasKey(o => o.Id);
+            entity.HasIndex(o => new { o.Email, o.Purpose });
+            entity.Property(o => o.Email).HasMaxLength(150).IsRequired();
+            entity.Property(o => o.Purpose).HasMaxLength(30).IsRequired();
         });
 
         modelBuilder.Entity<Notification>(entity =>

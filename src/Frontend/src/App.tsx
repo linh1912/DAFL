@@ -16,6 +16,7 @@ import {
 } from './mockData';
 import { getProductDetailExtra } from './productDetailHelper';
 import { Header } from './components/common/Header';
+import { SiteFooter } from './components/common/SiteFooter';
 import { CategoryFilter } from './components/product/CategoryFilter';
 import { ProductCard } from './components/product/ProductCard';
 import { ProductGallery } from './components/product/ProductGallery';
@@ -37,6 +38,18 @@ import { MockPayOSStandalonePage } from './components/checkout/MockPayOSStandalo
 import { PaymentSuccessPage } from './components/checkout/PaymentSuccessPage';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+const UNVERIFIED_LOGIN_MESSAGE = 'Tài khoản chưa được xác thực. Vui lòng nhập mã đã gửi về email của bạn.';
+
+interface PendingAdd {
+  product: Product;
+  qty: number;
+  buyNow: boolean;
+}
+
+interface RegisterVerificationResult {
+  email: string;
+  requiresVerification: boolean;
+}
 
 export default function App() {
   const navigate = useNavigate();
@@ -56,6 +69,8 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [homePriceRange, setHomePriceRange] = useState<'all' | 'under-500' | '500-2000' | 'over-2000'>('all');
+  const [homeInStockOnly, setHomeInStockOnly] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -63,6 +78,17 @@ export default function App() {
   const [visibleCount, setVisibleCount] = useState(16);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // Home sidebar filters (price range / in-stock) — single predicate shared by
+  // the rendered grid and the lazy-loading logic so both count the same list.
+  const matchesHomeFilters = (product: Product) => {
+    if (homeInStockOnly && product.availableStock <= 0) return false;
+    if (homePriceRange === 'under-500') return product.price < 500000;
+    if (homePriceRange === '500-2000') return product.price >= 500000 && product.price <= 2000000;
+    if (homePriceRange === 'over-2000') return product.price > 2000000;
+    return true;
+  };
+  const filteredProductCount = products.filter(matchesHomeFilters).length;
 
   // Product Detail Modal State
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
@@ -126,6 +152,13 @@ export default function App() {
   const [registerAddress, setRegisterAddress] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [pendingAdd, setPendingAdd] = useState<PendingAdd | null>(null);
+  const [authGateNotice, setAuthGateNotice] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState('');
+  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
+  const [loginEmailError, setLoginEmailError] = useState<string | null>(null);
+  const [loginPasswordError, setLoginPasswordError] = useState<string | null>(null);
+  const [loginFailureCount, setLoginFailureCount] = useState(0);
 
   // User Account Dropdown Toggle State
   const [isAccountDropdownOpen, setIsAccountDropdownOpen] = useState(false);
@@ -212,17 +245,23 @@ export default function App() {
     fetchProducts(selectedCategory, debouncedSearch);
   }, [selectedCategory, debouncedSearch]);
 
+  // Sidebar filters are client-side only: restart lazy loading from page one,
+  // mirroring the visibleCount reset fetchProducts does for category/search.
+  useEffect(() => {
+    setVisibleCount(16);
+  }, [homePriceRange, homeInStockOnly]);
+
   // Scroll-based lazy loading with IntersectionObserver
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return;
-    if (visibleCount >= products.length) return;
+    if (visibleCount >= filteredProductCount) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0] && entries[0].isIntersecting && !isLoadingMore) {
           setIsLoadingMore(true);
           setTimeout(() => {
-            setVisibleCount(prev => Math.min(prev + 16, products.length));
+            setVisibleCount(prev => Math.min(prev + 16, filteredProductCount));
             setIsLoadingMore(false);
           }, 300);
         }
@@ -237,13 +276,13 @@ export default function App() {
       if (el) observer.unobserve(el);
       observer.disconnect();
     };
-  }, [visibleCount, products.length, isLoadingMore]);
+  }, [visibleCount, filteredProductCount, isLoadingMore]);
 
   const handleLoadMore = () => {
-    if (visibleCount >= products.length || isLoadingMore) return;
+    if (visibleCount >= filteredProductCount || isLoadingMore) return;
     setIsLoadingMore(true);
     setTimeout(() => {
-      setVisibleCount(prev => Math.min(prev + 16, products.length));
+      setVisibleCount(prev => Math.min(prev + 16, filteredProductCount));
       setIsLoadingMore(false);
     }, 250);
   };
@@ -577,9 +616,15 @@ export default function App() {
   // ------------------------------------------
   // Cart & Voucher Operations
   // ------------------------------------------
-  const addToCart = (product: Product, qty: number = 1) => {
-    setCheckoutResult(null);
-    setOrderStatus('Pending');
+  const openAuthGate = (pending?: PendingAdd) => {
+    if (pending) setPendingAdd(pending);
+    setAuthGateNotice(true);
+    setAuthTab('login');
+    setAuthError(null);
+    setIsAuthModalOpen(true);
+  };
+
+  const mergeProductIntoCart = (product: Product, qty: number) => {
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {
@@ -589,10 +634,37 @@ export default function App() {
       }
       return [...prev, { product, quantity: qty }];
     });
+  };
+
+  const executePendingAdd = (pending: PendingAdd) => {
+    setCheckoutResult(null);
+    setOrderStatus('Pending');
+    if (pending.buyNow) {
+      setCart([{ product: pending.product, quantity: pending.qty }]);
+      setSelectedProduct(null);
+    } else {
+      mergeProductIntoCart(pending.product, pending.qty);
+    }
+    navigateTo('cart');
+    showToast('Đã thêm vào giỏ', `Đã thêm ${pending.product.name} vào giỏ hàng.`, 'System');
+  };
+
+  const addToCart = (product: Product, qty: number = 1) => {
+    if (!user) {
+      openAuthGate({ product, qty, buyNow: false });
+      return;
+    }
+    setCheckoutResult(null);
+    setOrderStatus('Pending');
+    mergeProductIntoCart(product, qty);
     navigateTo('cart');
   };
 
   const handleBuyNow = (product: Product, qty: number = 1) => {
+    if (!user) {
+      openAuthGate({ product, qty, buyNow: true });
+      return;
+    }
     setCheckoutResult(null);
     setOrderStatus('Pending');
     setCart([{ product, quantity: qty }]);
@@ -670,7 +742,7 @@ export default function App() {
   const handleRequireAuth = () => {
     sessionStorage.setItem('dafl_return_route', '/cart');
     showToast('Yêu cầu đăng nhập', 'Vui lòng đăng nhập tài khoản để tiến hành thanh toán đơn hàng.', 'System');
-    navigateTo('login');
+    openAuthGate();
   };
 
   const handleCheckout = async (e: React.FormEvent) => {
@@ -740,6 +812,202 @@ export default function App() {
   // ------------------------------------------
   // Auth Operations: Login, Register, Logout
   // ------------------------------------------
+  const updateLoginEmail = (value: string) => {
+    setLoginEmail(value);
+    if (loginEmailError) setLoginEmailError(null);
+  };
+
+  const updateLoginPassword = (value: string) => {
+    setLoginPassword(value);
+    if (loginPasswordError) setLoginPasswordError(null);
+  };
+
+  const getResponseError = (json: ApiResponse<any>, fallback: string) => {
+    if (json.errors && json.errors.length > 0) return json.errors.join(' ');
+    return json.message || fallback;
+  };
+
+  const applyAuthenticatedUser = (authUser: User) => {
+    setUser(authUser);
+    setCustomerName(authUser.fullName);
+    setCustomerEmail(authUser.email);
+    if (authUser.phoneNumber) setCustomerPhone(authUser.phoneNumber);
+    if (authUser.address) setShippingAddress(authUser.address);
+  };
+
+  const completeAuthentication = (
+    authUser: User,
+    toastTitle = 'Đăng nhập thành công',
+    toastMessage = `Xin chào mừng trở lại, ${authUser.fullName}!`
+  ) => {
+    const wasModalOpen = isAuthModalOpen;
+    const pending = pendingAdd;
+
+    applyAuthenticatedUser(authUser);
+    setAuthError(null);
+    setLoginEmailError(null);
+    setLoginPasswordError(null);
+    setLoginFailureCount(0);
+    setVerificationEmail('');
+    setVerificationNotice(null);
+    setAuthGateNotice(false);
+    setIsAuthModalOpen(false);
+    setPendingAdd(null);
+
+    if (pending) {
+      executePendingAdd(pending);
+      return;
+    }
+
+    showToast(toastTitle, toastMessage, 'System');
+
+    const returnRoute = sessionStorage.getItem('dafl_return_route');
+    if (returnRoute) {
+      sessionStorage.removeItem('dafl_return_route');
+      const clean = returnRoute.replace(/^#\/?/, '').replace(/^\/+/, '');
+      const parts = clean.split('/');
+      navigateTo((parts[0] || 'home') as AppRoute, parts[1]);
+    } else if (!wasModalOpen) {
+      navigateTo('home');
+    }
+  };
+
+  const handleAuthClose = () => {
+    setPendingAdd(null);
+    setAuthGateNotice(false);
+    setVerificationEmail('');
+    setVerificationNotice(null);
+    setIsAuthModalOpen(false);
+    sessionStorage.removeItem('dafl_return_route');
+    if (location.pathname === '/login' || location.pathname === '/register') {
+      navigateTo('home');
+    }
+  };
+
+  const handleVerifyEmail = async (code: string): Promise<string | null> => {
+    if (!verificationEmail) return 'Không tìm thấy email cần xác thực.';
+    setAuthLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/verify-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: verificationEmail, code })
+      });
+      const json: ApiResponse<User> = await res.json();
+      if (json.success && json.data) {
+        completeAuthentication(json.data, 'Xác thực thành công', `Chào mừng ${json.data.fullName} đến với DAFL Store!`);
+        return null;
+      }
+      return getResponseError(json, 'Mã xác nhận không đúng.');
+    } catch {
+      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleResendVerification = async (): Promise<string | null> => {
+    if (!verificationEmail) return 'Không tìm thấy email cần xác thực.';
+    setAuthLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/resend-verification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: verificationEmail })
+      });
+      const json: ApiResponse<any> = await res.json();
+      // debugCode (nếu môi trường dev/test trả về) được bỏ qua có chủ đích:
+      // FE không tự điền và không hiển thị mã xác thực.
+      if (json.success) return null;
+      return getResponseError(json, 'Không thể gửi lại mã xác thực.');
+    } catch {
+      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleOtpLoginRequest = async (email: string): Promise<string | null> => {
+    setAuthLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/otp-login/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      });
+      const json: ApiResponse<any> = await res.json();
+      if (json.success) return null;
+      return getResponseError(json, 'Không thể gửi mã OTP.');
+    } catch {
+      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleOtpLoginVerify = async (email: string, code: string): Promise<string | null> => {
+    setAuthLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/otp-login/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, code })
+      });
+      const json: ApiResponse<User> = await res.json();
+      if (json.success && json.data) {
+        completeAuthentication(json.data);
+        return null;
+      }
+      return getResponseError(json, 'Mã xác nhận không đúng.');
+    } catch {
+      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleForgotPasswordRequest = async (email: string): Promise<string | null> => {
+    setAuthLoading(true);
+    try {
+      await fetch(`${API_BASE}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      });
+      // Endpoint luôn trả phản hồi generic để không lộ email có tồn tại hay không.
+      return null;
+    } catch {
+      // Vẫn giữ phản hồi generic ở UI theo đúng luồng quên mật khẩu.
+      return null;
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (email: string, code: string, newPassword: string): Promise<string | null> => {
+    setAuthLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, code, newPassword })
+      });
+      const json: ApiResponse<any> = await res.json();
+      if (json.success) return null;
+      return getResponseError(json, 'Không thể đặt lại mật khẩu.');
+    } catch {
+      return 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.';
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleFillDemoAccount = () => {
     setLoginEmail('demo@dafl.vn');
     setLoginPassword('Password123!');
@@ -747,39 +1015,49 @@ export default function App() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthLoading(true);
     setAuthError(null);
+    setLoginEmailError(null);
+    setLoginPasswordError(null);
 
+    const normalizedEmail = loginEmail.trim().toLowerCase();
+    if (normalizedEmail !== loginEmail) setLoginEmail(normalizedEmail);
+
+    if (!normalizedEmail) {
+      setLoginEmailError('Email không được để trống.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setLoginEmailError('Email không đúng định dạng.');
+      return;
+    }
+    if (!loginPassword) {
+      setLoginPasswordError('Mật khẩu không được để trống.');
+      return;
+    }
+
+    setAuthLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ email: loginEmail, password: loginPassword })
+        body: JSON.stringify({ email: normalizedEmail, password: loginPassword })
       });
       const json: ApiResponse<User> = await res.json();
       if (json.success && json.data) {
-        setUser(json.data);
-        setCustomerName(json.data.fullName);
-        setCustomerEmail(json.data.email);
-        if (json.data.phoneNumber) setCustomerPhone(json.data.phoneNumber);
-        if (json.data.address) setShippingAddress(json.data.address);
-        showToast('Đăng nhập thành công', `Xin chào mừng trở lại, ${json.data.fullName}!`, 'System');
-
-        const returnRoute = sessionStorage.getItem('dafl_return_route');
-        if (returnRoute) {
-          sessionStorage.removeItem('dafl_return_route');
-          const clean = returnRoute.replace(/^#\/?/, '').replace(/^\/+/, '');
-          const parts = clean.split('/');
-          navigateTo((parts[0] || 'home') as AppRoute, parts[1]);
-        } else {
-          navigateTo('home');
-        }
+        completeAuthentication(json.data);
+      } else if (json.message === UNVERIFIED_LOGIN_MESSAGE) {
+        setLoginFailureCount(0);
+        setVerificationEmail(normalizedEmail);
+        setVerificationNotice(json.message);
       } else {
-        setAuthError(json.message || 'Email hoặc mật khẩu không chính xác.');
+        const message = getResponseError(json, 'Email hoặc mật khẩu không chính xác.');
+        setAuthError(message);
+        setLoginPasswordError(message);
+        setLoginFailureCount(prev => prev + 1);
       }
     } catch {
-      if (loginEmail === 'demo@dafl.vn') {
+      if (normalizedEmail === 'demo@dafl.vn') {
         const demoUser: User = {
           id: '11111111-1111-1111-1111-111111111111',
           email: 'demo@dafl.vn',
@@ -789,21 +1067,7 @@ export default function App() {
           role: 'Customer',
           sessionId: 'demo-session-' + Date.now()
         };
-        setUser(demoUser);
-        setCustomerName(demoUser.fullName);
-        setCustomerEmail(demoUser.email);
-        setCustomerPhone(demoUser.phoneNumber || '');
-        setShippingAddress(demoUser.address || '');
-        showToast('Đăng nhập thành công', `Xin chào mừng trở lại, ${demoUser.fullName}!`, 'System');
-        const returnRoute = sessionStorage.getItem('dafl_return_route');
-        if (returnRoute) {
-          sessionStorage.removeItem('dafl_return_route');
-          const clean = returnRoute.replace(/^#\/?/, '').replace(/^\/+/, '');
-          const parts = clean.split('/');
-          navigateTo((parts[0] || 'home') as AppRoute, parts[1]);
-        } else {
-          navigateTo('home');
-        }
+        completeAuthentication(demoUser);
       } else {
         setAuthError('Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại sau.');
       }
@@ -824,6 +1088,11 @@ export default function App() {
     }
     if (!/[A-Z]/.test(registerPassword)) {
       setAuthError('Mật khẩu phải chứa ít nhất 1 ký tự chữ hoa (A-Z).');
+      setAuthLoading(false);
+      return;
+    }
+    if (!/\d/.test(registerPassword)) {
+      setAuthError('Mật khẩu phải chứa ít nhất 1 chữ số (0-9).');
       setAuthLoading(false);
       return;
     }
@@ -851,27 +1120,19 @@ export default function App() {
           address: registerAddress
         })
       });
-      const json: ApiResponse<User> = await res.json();
-      if (json.success && json.data) {
-        setUser(json.data);
-        setCustomerName(json.data.fullName);
-        setCustomerEmail(json.data.email);
-        if (json.data.phoneNumber) setCustomerPhone(json.data.phoneNumber);
-        if (json.data.address) setShippingAddress(json.data.address);
+      const json: ApiResponse<User | RegisterVerificationResult> = await res.json();
+      if (json.success && json.data && 'requiresVerification' in json.data && json.data.requiresVerification) {
+        setVerificationEmail(json.data.email || registerEmail.trim().toLowerCase());
+        setVerificationNotice(json.message || 'Đã gửi mã xác thực về email của bạn. Vui lòng kiểm tra hộp thư (cả mục Spam/Quảng cáo).');
         setRegisterPassword('');
         setRegisterConfirmPassword('');
-        showToast('Đăng ký thành công', `Chào mừng ${json.data.fullName} đến với DAFL Store!`, 'Promotion');
-        const returnRoute = sessionStorage.getItem('dafl_return_route');
-        if (returnRoute) {
-          sessionStorage.removeItem('dafl_return_route');
-          const clean = returnRoute.replace(/^#\/?/, '').replace(/^\/+/, '');
-          const parts = clean.split('/');
-          navigateTo((parts[0] || 'home') as AppRoute, parts[1]);
-        } else {
-          navigateTo('home');
-        }
+      } else if (json.success && json.data && 'id' in json.data) {
+        // Tương thích ngược nếu API cũ vẫn trả UserDto trực tiếp.
+        setRegisterPassword('');
+        setRegisterConfirmPassword('');
+        completeAuthentication(json.data, 'Đăng ký thành công', `Chào mừng ${json.data.fullName} đến với DAFL Store!`);
       } else {
-        setAuthError(json.message || 'Không thể đăng ký tài khoản.');
+        setAuthError(getResponseError(json, 'Không thể đăng ký tài khoản.'));
       }
     } catch {
       setAuthError('Không thể kết nối đến máy chủ. Vui lòng thử lại sau.');
@@ -1109,11 +1370,48 @@ export default function App() {
 
 
   const unreadCount = notifications.filter(n => !n.isRead).length;
+  const visibleProducts = products.filter(matchesHomeFilters);
   const formatPrice = (val: number) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
   const formatTime = (secs: number) => {
     const mins = Math.floor(secs / 60);
     const s = secs % 60;
     return `${mins.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const commonAuthProps = {
+    gateNotice: authGateNotice,
+    authError,
+    authLoading,
+    loginEmail,
+    setLoginEmail: updateLoginEmail,
+    loginPassword,
+    setLoginPassword: updateLoginPassword,
+    loginEmailError,
+    loginPasswordError,
+    loginFailureCount,
+    registerName,
+    setRegisterName,
+    registerEmail,
+    setRegisterEmail,
+    registerPassword,
+    setRegisterPassword,
+    registerConfirmPassword,
+    setRegisterConfirmPassword,
+    registerPhone,
+    setRegisterPhone,
+    registerAddress,
+    setRegisterAddress,
+    verificationEmail,
+    verificationNotice,
+    onLogin: handleLogin,
+    onRegister: handleRegister,
+    onVerifyEmail: handleVerifyEmail,
+    onResendVerification: handleResendVerification,
+    onOtpLoginRequest: handleOtpLoginRequest,
+    onOtpLoginVerify: handleOtpLoginVerify,
+    onForgotPasswordRequest: handleForgotPasswordRequest,
+    onResetPassword: handleResetPassword,
+    onFillDemoAccount: handleFillDemoAccount,
   };
 
   const isStandalone = location.pathname.startsWith('/mock-payos') || location.pathname.startsWith('/payment-success');
@@ -1125,7 +1423,7 @@ export default function App() {
         <div className="toast-container">
           <div className="toast-alert">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <Sparkles size={16} color="#ff5722" />
+              <Sparkles size={16} color="#e40046" />
               <strong style={{ fontSize: '0.875rem', color: 'var(--text-main)' }}>{toastAlert.title}</strong>
             </div>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{toastAlert.message}</p>
@@ -1161,24 +1459,20 @@ export default function App() {
           path="/"
           element={
             <>
-              {/* Hero Showcase (Commercial E-Commerce Promotion) */}
+              {/* Compact collection heading */}
               <section className="hero">
                 <div className="hero-layout">
                   <div className="hero-main">
                     <div className="hero-top-badge">
-                      <Sparkles size={14} color="#e02e24" />
-                      <span>Săn Deal Giá Sốc • Mua Sắm Tiết Kiệm</span>
+                      <Sparkles size={14} color="#b80039" />
+                      <span>FLASH SALE DAFL • GIẢM ĐẾN 50%</span>
                     </div>
                     <h1 className="hero-title">
                       Sàn Thương Mại Điện Tử DAFL
                     </h1>
                     <p className="hero-subtitle">
-                      <strong>Càng Mua Càng Rẻ</strong> — Mua sắm thông minh, ngập tràn deal sốc mỗi ngày! Khám phá 26 ngành hàng đa dạng từ Thời trang, Điện thoại, Gia dụng đến Hàng tiêu dùng với mức giá ưu đãi nhất thị trường và bảo đảm quyền lợi người mua 100%.
+                      Mỹ phẩm chính hãng với giá hiển thị rõ ràng, ưu đãi theo ngày và chính sách đổi trả trong 30 ngày.
                     </p>
-                    <div className="hero-tags">
-                    </div>
-                    <div className="hero-actions">
-                    </div>
                   </div>
                 </div>
               </section>
@@ -1190,75 +1484,154 @@ export default function App() {
                 onSelectCategory={setSelectedCategory}
               />
 
-              {/* Products Grid */}
-              <section id="products-section">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, flexWrap: 'wrap', gap: 10 }}>
-                  <h2 style={{ fontSize: '1.25rem', fontWeight: 800 }}>
-                    {selectedCategory ? (categories.find(c => c.id === selectedCategory)?.name || 'Danh mục sản phẩm') : 'Tất cả sản phẩm'}
-                  </h2>
-                  {products.length > 0 && (
-                    <div className="product-count-badge">
-                      <Package size={14} color="var(--primary)" />
-                      <span>Hiển thị {Math.min(visibleCount, products.length)} / {products.length} sản phẩm</span>
-                    </div>
-                  )}
-                </div>
-
-                {loading ? (
-                  <div style={{ textAlign: 'center', padding: '60px 0', color: '#9ca3af' }}>
-                    <RefreshCw size={24} className="spin" style={{ display: 'inline-block', marginBottom: 8 }} />
-                    <div>Đang tải danh sách sản phẩm...</div>
-                  </div>
-                ) : products.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '60px 0', color: '#9ca3af' }}>
-                    Không tìm thấy sản phẩm nào phù hợp với tìm kiếm.
-                  </div>
-                ) : (
-                  <>
-                    <div className="products-grid">
-                      {products.slice(0, visibleCount).map(product => (
-                        <ProductCard
-                          key={product.id}
-                          product={product}
-                          onOpenDetail={openProductDetail}
-                          onAddToCart={addToCart}
-                        />
+              <div className="shop-layout">
+                <aside className="shop-sidebar" aria-label="Bộ lọc sản phẩm">
+                  <div className="filter-panel">
+                    <div className="filter-group">
+                      <h3>Khoảng giá</h3>
+                      {[
+                        { value: 'all', label: 'Tất cả mức giá' },
+                        { value: 'under-500', label: 'Dưới 500.000đ' },
+                        { value: '500-2000', label: '500.000đ — 2.000.000đ' },
+                        { value: 'over-2000', label: 'Trên 2.000.000đ' },
+                      ].map(option => (
+                        <label key={option.value} className="filter-option">
+                          <input
+                            type="radio"
+                            name="home-price-range"
+                            checked={homePriceRange === option.value}
+                            onChange={() => setHomePriceRange(option.value as typeof homePriceRange)}
+                          />
+                          <span>{option.label}</span>
+                        </label>
                       ))}
                     </div>
 
-                    {/* Scroll Sentinel for Infinite Scroll Lazy Loading */}
-                    <div ref={loadMoreSentinelRef} style={{ height: 24 }} />
-
-                    {/* Lazy Load Spinner */}
-                    {isLoadingMore && (
-                      <div className="lazy-load-indicator">
-                        <RefreshCw size={20} className="spin" />
-                        <span>Đang tải thêm sản phẩm khi cuộn...</span>
-                      </div>
-                    )}
-
-                    {/* Manual Load More Button as Fallback */}
-                    {!isLoadingMore && visibleCount < products.length && (
-                      <div style={{ textAlign: 'center', margin: '16px 0 28px' }}>
+                    <div className="filter-group">
+                      <h3>Loại sản phẩm</h3>
+                      <button
+                        type="button"
+                        className={`filter-link ${selectedCategory === null ? 'active' : ''}`}
+                        onClick={() => setSelectedCategory(null)}
+                      >
+                        Tất cả sản phẩm
+                      </button>
+                      {categories.map(category => (
                         <button
-                          className="btn btn-secondary"
-                          onClick={handleLoadMore}
-                          style={{ padding: '10px 24px', borderRadius: 999, fontSize: '0.875rem' }}
+                          key={category.id}
+                          type="button"
+                          className={`filter-link ${selectedCategory === category.id ? 'active' : ''}`}
+                          onClick={() => setSelectedCategory(category.id)}
                         >
-                          Tải thêm {Math.min(16, products.length - visibleCount)} sản phẩm tiếp theo
+                          {category.name}
                         </button>
-                      </div>
-                    )}
+                      ))}
+                    </div>
 
-                    {/* End of list state */}
-                    {visibleCount >= products.length && products.length > 0 && (
-                      <div className="lazy-load-end">
-                        <CheckCircle2 size={18} color="#10b981" />
-                        <span>Bạn đã xem toàn bộ {products.length} sản phẩm</span>
+                    <div className="filter-group">
+                      <h3>Tình trạng</h3>
+                      <label className="filter-option">
+                        <input
+                          type="checkbox"
+                          checked={homeInStockOnly}
+                          onChange={e => setHomeInStockOnly(e.target.checked)}
+                        />
+                        <span>Chỉ hiển thị sản phẩm còn hàng</span>
+                      </label>
+                    </div>
+                  </div>
+                </aside>
+
+                {/* Products Grid */}
+                <section id="products-section" className="shop-main">
+                  <div className="shop-section-header">
+                    <h2>
+                      {selectedCategory ? (categories.find(c => c.id === selectedCategory)?.name || 'Danh mục sản phẩm') : 'Tất cả sản phẩm'}
+                    </h2>
+                    {visibleProducts.length > 0 && (
+                      <div className="product-count-badge">
+                        <Package size={14} color="var(--primary)" />
+                        <span>Hiển thị {Math.min(visibleCount, visibleProducts.length)} / {visibleProducts.length} sản phẩm</span>
                       </div>
                     )}
-                  </>
-                )}
+                  </div>
+
+                  {loading ? (
+                    <div className="shop-empty-state">
+                      <RefreshCw size={24} className="spin" />
+                      <div>Đang tải danh sách sản phẩm...</div>
+                    </div>
+                  ) : visibleProducts.length === 0 ? (
+                    <div className="shop-empty-state">
+                      Không tìm thấy sản phẩm nào phù hợp với tìm kiếm và bộ lọc hiện tại.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="products-grid">
+                        {visibleProducts.slice(0, visibleCount).map(product => (
+                          <ProductCard
+                            key={product.id}
+                            product={product}
+                            onOpenDetail={openProductDetail}
+                            onAddToCart={addToCart}
+                          />
+                        ))}
+                      </div>
+
+                      {/* Scroll Sentinel for Infinite Scroll Lazy Loading */}
+                      <div ref={loadMoreSentinelRef} className="load-more-sentinel" />
+
+                      {/* Lazy Load Spinner */}
+                      {isLoadingMore && (
+                        <div className="lazy-load-indicator">
+                          <RefreshCw size={20} className="spin" />
+                          <span>Đang tải thêm sản phẩm khi cuộn...</span>
+                        </div>
+                      )}
+
+                      {/* Manual Load More Button as Fallback */}
+                      {!isLoadingMore && visibleCount < visibleProducts.length && (
+                        <div className="load-more-action">
+                          <button
+                            className="btn btn-secondary"
+                            onClick={handleLoadMore}
+                          >
+                            Tải thêm {Math.min(16, visibleProducts.length - visibleCount)} sản phẩm tiếp theo
+                          </button>
+                        </div>
+                      )}
+
+                      {/* End of list state */}
+                      {visibleCount >= visibleProducts.length && visibleProducts.length > 0 && (
+                        <div className="lazy-load-end">
+                          <CheckCircle2 size={18} color="#2e7d4f" />
+                          <span>Bạn đã xem toàn bộ {visibleProducts.length} sản phẩm</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </section>
+              </div>
+
+              <section className="brand-banner-row" aria-label="Danh mục nổi bật tại DAFL">
+                {(categories.length > 0 ? categories.slice(0, 4) : [
+                  { id: 'dafl-care', name: 'Chăm sóc da' },
+                  { id: 'dafl-makeup', name: 'Trang điểm' },
+                  { id: 'dafl-hair', name: 'Chăm sóc tóc' },
+                  { id: 'dafl-body', name: 'Cơ thể & nước hoa' },
+                ]).map(category => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    className="brand-banner"
+                    onClick={() => {
+                      if (categories.length > 0) setSelectedCategory(category.id);
+                    }}
+                  >
+                    <strong>{category.name}</strong>
+                    <span>Ưu đãi DAFL đang áp dụng</span>
+                  </button>
+                ))}
               </section>
             </>
           }
@@ -1311,7 +1684,7 @@ export default function App() {
                       onClick={() => navigateTo('profile')}
                       style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}
                     >
-                      <MapPin size={15} color="#e02e24" /> Cấu hình địa chỉ nhận hàng
+                      <MapPin size={15} color="#e40046" /> Cấu hình địa chỉ nhận hàng
                     </button>
                   </div>
                 </div>
@@ -1448,7 +1821,7 @@ export default function App() {
                                       {order.voucherCode ? ` (Mã: ${order.voucherCode})` : ''} •
                                     </span>
                                   )}
-                                  {' '}Tổng giá trị đơn: <strong style={{ color: '#e02e24', fontSize: '1.15rem' }}>{formatPrice(order.totalAmount)}</strong>
+                                  {' '}Tổng giá trị đơn: <strong style={{ color: '#e40046', fontSize: '1.15rem' }}>{formatPrice(order.totalAmount)}</strong>
                                 </div>
                               </div>
 
@@ -1701,7 +2074,7 @@ export default function App() {
                             <Clock size={14} color="#6366f1" /> Đổi trả trong 7 ngày
                           </div>
                           <div className="product-trust-badge">
-                            <ShieldCheck size={14} color="#e02e24" /> Bảo hành 12 tháng
+                            <ShieldCheck size={14} color="#e40046" /> Bảo hành 12 tháng
                           </div>
                           <div className="product-trust-badge">
                             <Truck size={14} color="#f59e0b" /> Giao hàng toàn quốc
@@ -1731,7 +2104,7 @@ export default function App() {
                         </div>
 
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
-                          <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#e02e24' }}>
+                          <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#e40046' }}>
                             {formatPrice(selectedProduct.price)}
                           </span>
                           {selectedProduct.originalPrice && (
@@ -1740,7 +2113,7 @@ export default function App() {
                             </span>
                           )}
                           {selectedProduct.originalPrice && selectedProduct.originalPrice > selectedProduct.price && (
-                            <span style={{ fontSize: '0.8rem', background: 'rgba(224, 46, 36, 0.1)', color: '#e02e24', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
+                            <span style={{ fontSize: '0.8rem', background: 'rgba(228, 0, 70, 0.1)', color: '#e40046', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
                               Tiết kiệm {formatPrice(selectedProduct.originalPrice - selectedProduct.price)}
                             </span>
                           )}
@@ -1955,7 +2328,7 @@ export default function App() {
                             <div key={ev.id} className="evaluation-card">
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#e02e24', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700 }}>
+                                  <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#e40046', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700 }}>
                                     {ev.userName.charAt(0)}
                                   </div>
                                   <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{ev.userName}</span>
@@ -2049,35 +2422,15 @@ export default function App() {
           path="/login"
           element={
             <AuthModal
+              {...commonAuthProps}
               isOpen={true}
               isModal={false}
-              onClose={() => navigateTo('home')}
+              onClose={handleAuthClose}
               authTab="login"
               setAuthTab={(tab) => {
                 setAuthTab(tab);
                 navigateTo(tab);
               }}
-              authError={authError}
-              authLoading={authLoading}
-              loginEmail={loginEmail}
-              setLoginEmail={setLoginEmail}
-              loginPassword={loginPassword}
-              setLoginPassword={setLoginPassword}
-              registerName={registerName}
-              setRegisterName={setRegisterName}
-              registerEmail={registerEmail}
-              setRegisterEmail={setRegisterEmail}
-              registerPassword={registerPassword}
-              setRegisterPassword={setRegisterPassword}
-              registerConfirmPassword={registerConfirmPassword}
-              setRegisterConfirmPassword={setRegisterConfirmPassword}
-              registerPhone={registerPhone}
-              setRegisterPhone={setRegisterPhone}
-              registerAddress={registerAddress}
-              setRegisterAddress={setRegisterAddress}
-              onLogin={handleLogin}
-              onRegister={handleRegister}
-              onFillDemoAccount={handleFillDemoAccount}
             />
           }
         />
@@ -2085,35 +2438,15 @@ export default function App() {
           path="/register"
           element={
             <AuthModal
+              {...commonAuthProps}
               isOpen={true}
               isModal={false}
-              onClose={() => navigateTo('home')}
+              onClose={handleAuthClose}
               authTab="register"
               setAuthTab={(tab) => {
                 setAuthTab(tab);
                 navigateTo(tab);
               }}
-              authError={authError}
-              authLoading={authLoading}
-              loginEmail={loginEmail}
-              setLoginEmail={setLoginEmail}
-              loginPassword={loginPassword}
-              setLoginPassword={setLoginPassword}
-              registerName={registerName}
-              setRegisterName={setRegisterName}
-              registerEmail={registerEmail}
-              setRegisterEmail={setRegisterEmail}
-              registerPassword={registerPassword}
-              setRegisterPassword={setRegisterPassword}
-              registerConfirmPassword={registerConfirmPassword}
-              setRegisterConfirmPassword={setRegisterConfirmPassword}
-              registerPhone={registerPhone}
-              setRegisterPhone={setRegisterPhone}
-              registerAddress={registerAddress}
-              setRegisterAddress={setRegisterAddress}
-              onLogin={handleLogin}
-              onRegister={handleRegister}
-              onFillDemoAccount={handleFillDemoAccount}
             />
           }
         />
@@ -2165,7 +2498,7 @@ export default function App() {
                             <strong style={{ fontSize: '1.1rem' }}>#{orderCodeNum}</strong>
                             <span style={{ margin: '0 8px', color: 'var(--border-subtle)' }}>|</span>
                             <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)' }}>Tổng thanh toán: </span>
-                            <strong style={{ color: '#e02e24', fontSize: '1.25rem' }}>{formatPrice(totalAmt)}</strong>
+                            <strong style={{ color: '#e40046', fontSize: '1.25rem' }}>{formatPrice(totalAmt)}</strong>
                           </div>
                           <button
                             type="button"
@@ -2231,6 +2564,23 @@ export default function App() {
         <Route path="/payment-success" element={<PaymentSuccessPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+
+      {!isStandalone && <SiteFooter />}
+
+      {/* Auth gate overlay: giữ nguyên trang hiện tại, đóng modal sẽ hủy pendingAdd */}
+      {isAuthModalOpen && location.pathname !== '/login' && location.pathname !== '/register' && (
+        <AuthModal
+          {...commonAuthProps}
+          isOpen={true}
+          isModal={true}
+          onClose={handleAuthClose}
+          authTab={authTab}
+          setAuthTab={(tab) => {
+            setAuthTab(tab);
+            setAuthError(null);
+          }}
+        />
+      )}
 
       {/* ============================================================== */}
       {/* MODAL: NOTIFICATIONS MODAL */}

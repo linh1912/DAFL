@@ -14,6 +14,7 @@ using DAFL.Backend.Features.Products.ListProducts;
 using DAFL.Backend.Features.Vouchers;
 using DAFL.Backend.Infrastructure.Caching;
 using DAFL.Backend.Infrastructure.Data;
+using DAFL.Backend.Infrastructure.Email;
 using DAFL.Backend.Infrastructure.Hubs;
 using DAFL.Backend.Infrastructure.Messaging;
 using DAFL.Backend.Infrastructure.Payments;
@@ -122,6 +123,18 @@ builder.Services.AddHostedService<KafkaConsumerWorker>();
 builder.Services.AddScoped<IPayOSService, PayOSService>();
 builder.Services.AddHostedService<ReservationCleanupWorker>();
 
+// 7b. Email & OTP (xác thực email / quên mật khẩu / đăng nhập OTP)
+// Có Email:SmtpHost thì gửi SMTP thật, không có thì LogEmailSender (dev).
+if (!string.IsNullOrWhiteSpace(builder.Configuration["Email:SmtpHost"]))
+{
+    builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
+}
+else
+{
+    builder.Services.AddScoped<IEmailSender, LogEmailSender>();
+}
+builder.Services.AddScoped<IOtpService, OtpService>();
+
 // 8. CORS configuration for React SPA + SignalR
 builder.Services.AddCors(options =>
 {
@@ -194,7 +207,20 @@ app.MapGet("/health", () => Results.Ok(new { status = "Healthy", database = "Pos
 // MODULE 1: AUTH - Xác thực & Quản lý phiên
 // ==========================================
 
-app.MapPost("/api/auth/register", async (RegisterCommand command, HttpContext httpContext, IMediator mediator) =>
+app.MapPost("/api/auth/register", async (RegisterCommand command, IMediator mediator) =>
+{
+    var result = await mediator.Send(command);
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("Register")
+.WithSummary("Đăng ký tài khoản mới")
+.WithDescription("Tạo tài khoản người dùng mới với email, mật khẩu và thông tin cá nhân. "
+    + "Tài khoản được tạo ở trạng thái CHƯA xác thực email và KHÔNG có session: hệ thống gửi mã OTP 6 số "
+    + "về đúng email vừa đăng ký; gọi POST /api/auth/verify-email để kích hoạt và nhận session cookie (sid). "
+    + "Mật khẩu phải thỏa 4 quy tắc: ≥ 8 ký tự, ≥ 1 chữ hoa, ≥ 1 chữ số, ≥ 1 ký tự đặc biệt.")
+.WithTags("Auth - Xác thực");
+
+app.MapPost("/api/auth/verify-email", async (VerifyEmailCommand command, HttpContext httpContext, IMediator mediator) =>
 {
     var result = await mediator.Send(command);
     if (result.Success && result.Data != null)
@@ -209,10 +235,79 @@ app.MapPost("/api/auth/register", async (RegisterCommand command, HttpContext ht
     }
     return result.Success ? Results.Ok(result) : Results.BadRequest(result);
 })
-.WithName("Register")
-.WithSummary("Đăng ký tài khoản mới")
-.WithDescription("Tạo tài khoản người dùng mới với email, mật khẩu và thông tin cá nhân. "
-    + "Nếu thành công, tự động tạo session cookie (sid) có hiệu lực 7 ngày và gửi thông báo chào mừng qua SignalR & Kafka.")
+.WithName("VerifyEmail")
+.WithSummary("Xác thực email bằng mã OTP sau đăng ký")
+.WithDescription("Kiểm tra mã OTP 6 số (hạn 10 phút, dùng 1 lần, sai 5 lần bị vô hiệu). "
+    + "Đúng mã → tài khoản được kích hoạt (EmailVerified = true) và tự đăng nhập: tạo session cookie (sid) 7 ngày giống hệt luồng login.")
+.WithTags("Auth - Xác thực");
+
+app.MapPost("/api/auth/resend-verification", async (ResendVerificationCommand command, IMediator mediator) =>
+{
+    var result = await mediator.Send(command);
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("ResendVerification")
+.WithSummary("Gửi lại mã xác thực email")
+.WithDescription("Gửi mã OTP xác thực mới nếu tài khoản tồn tại và chưa xác thực. "
+    + "Tôn trọng cooldown 60 giây giữa hai lần gửi và trần 5 mã/giờ. "
+    + "Trả về thông báo generic, không lộ email có tồn tại hay không.")
+.WithTags("Auth - Xác thực");
+
+app.MapPost("/api/auth/forgot-password", async (ForgotPasswordCommand command, IMediator mediator) =>
+{
+    var result = await mediator.Send(command);
+    return Results.Ok(result);
+})
+.WithName("ForgotPassword")
+.WithSummary("Yêu cầu đặt lại mật khẩu (quên mật khẩu)")
+.WithDescription("Nếu email tồn tại, gửi mã OTP 6 số để đặt lại mật khẩu. "
+    + "Luôn trả về cùng một thông báo generic cho mọi đầu vào (chống dò tài khoản), "
+    + "và vẫn hoạt động khi tài khoản đang bị khóa mềm.")
+.WithTags("Auth - Xác thực");
+
+app.MapPost("/api/auth/reset-password", async (ResetPasswordCommand command, IMediator mediator) =>
+{
+    var result = await mediator.Send(command);
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("ResetPassword")
+.WithSummary("Đặt lại mật khẩu bằng mã OTP")
+.WithDescription("Kiểm tra mã OTP, validate mật khẩu mới theo policy 4 quy tắc, không được trùng mật khẩu cũ. "
+    + "Thành công → đổi mật khẩu và hủy TẤT CẢ session đang đăng nhập của tài khoản.")
+.WithTags("Auth - Xác thực");
+
+app.MapPost("/api/auth/otp-login/request", async (OtpLoginRequestCommand command, IMediator mediator) =>
+{
+    var result = await mediator.Send(command);
+    return Results.Ok(result);
+})
+.WithName("OtpLoginRequest")
+.WithSummary("Yêu cầu mã OTP để đăng nhập không cần mật khẩu")
+.WithDescription("Nếu email tồn tại, gửi mã OTP 6 số để đăng nhập. "
+    + "Luôn trả về thông báo generic cho mọi đầu vào (chống dò tài khoản). "
+    + "Đây cũng là lối mở khóa ngay khi tài khoản bị khóa mềm ở làn mật khẩu.")
+.WithTags("Auth - Xác thực");
+
+app.MapPost("/api/auth/otp-login/verify", async (OtpLoginVerifyCommand command, HttpContext httpContext, IMediator mediator) =>
+{
+    var result = await mediator.Send(command);
+    if (result.Success && result.Data != null)
+    {
+        httpContext.Response.Cookies.Append("sid", result.Data.SessionId, new CookieOptions
+        {
+            HttpOnly = true,
+            SameSite = SameSiteMode.Lax,
+            Secure = false,
+            Expires = DateTimeOffset.UtcNow.AddDays(7)
+        });
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("OtpLoginVerify")
+.WithSummary("Đăng nhập bằng mã OTP")
+.WithDescription("Kiểm tra mã OTP đăng nhập (hạn 10 phút, dùng 1 lần, sai 5 lần bị vô hiệu). "
+    + "Đúng mã → tạo session cookie (sid) 7 ngày giống hệt luồng login; đồng thời email được coi là đã xác thực "
+    + "và tài khoản được mở khóa mềm ngay (reset bộ đếm sai mật khẩu).")
 .WithTags("Auth - Xác thực");
 
 app.MapPost("/api/auth/login", async (LoginCommand command, HttpContext httpContext, IMediator mediator) =>

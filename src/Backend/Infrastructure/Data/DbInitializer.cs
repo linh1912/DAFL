@@ -135,7 +135,9 @@ public static class DbInitializer
                     PhoneNumber = "0987654321",
                     Address = "Số 1 Đại Cồ Việt, Hai Bà Trưng, Hà Nội",
                     Role = "Customer",
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.UtcNow,
+                    EmailVerified = true,
+                    EmailVerifiedAt = DateTime.UtcNow
                 };
 
                 var adminUser = new User
@@ -147,7 +149,9 @@ public static class DbInitializer
                     PhoneNumber = "0912345678",
                     Address = "Tòa nhà Keangnam, Mễ Trì, Hà Nội",
                     Role = "Admin",
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.UtcNow,
+                    EmailVerified = true,
+                    EmailVerifiedAt = DateTime.UtcNow
                 };
 
                 await context.Users.AddRangeAsync(demoUser, adminUser);
@@ -178,6 +182,23 @@ public static class DbInitializer
 
                 await context.Notifications.AddRangeAsync(notifs);
                 await context.SaveChangesAsync();
+            }
+
+            // 1b. Idempotent: các user seed (demo/admin) trong DB dev cũ tạo trước khi có
+            // tính năng xác thực email sẽ bị khóa ngoài ý muốn → đánh dấu đã xác thực cho chúng.
+            var seedEmails = new[] { "demo@dafl.vn", "admin@dafl.vn" };
+            var unverifiedSeedUsers = await context.Users
+                .Where(u => seedEmails.Contains(u.Email) && !u.EmailVerified)
+                .ToListAsync();
+            if (unverifiedSeedUsers.Count > 0)
+            {
+                foreach (var seedUser in unverifiedSeedUsers)
+                {
+                    seedUser.EmailVerified = true;
+                    seedUser.EmailVerifiedAt ??= DateTime.UtcNow;
+                }
+                await context.SaveChangesAsync();
+                logger.LogInformation("Marked {Count} seed user(s) as email-verified.", unverifiedSeedUsers.Count);
             }
 
             // 2. Seed Vouchers (Idempotent: ensure FORDEV and all vouchers exist)

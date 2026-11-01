@@ -101,8 +101,8 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
         <div
           data-testid="checkout-auth-required-notice"
           style={{
-            background: 'rgba(224, 46, 36, 0.08)',
-            border: '1px solid rgba(224, 46, 36, 0.25)',
+            background: 'rgba(228, 0, 70, 0.08)',
+            border: '1px solid rgba(228, 0, 70, 0.25)',
             borderRadius: 8,
             padding: '12px 14px',
             marginTop: 14,
@@ -114,7 +114,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
             gap: 10
           }}
         >
-          <Lock size={18} color="#e02e24" style={{ flexShrink: 0 }} />
+          <Lock size={18} color="#e40046" style={{ flexShrink: 0 }} />
           <div>
             <strong>Yêu cầu xác thực:</strong> Bạn cần đăng nhập để được phép nhấn thanh toán đơn hàng này.
           </div>

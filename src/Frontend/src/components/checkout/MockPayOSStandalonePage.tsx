@@ -57,7 +57,7 @@ export const MockPayOSStandalonePage: React.FC = () => {
     <div style={{ minHeight: '100vh', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       <div style={{ background: '#fff', maxWidth: 480, width: '100%', borderRadius: 16, boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
         {/* Header */}
-        <div style={{ background: 'linear-gradient(135deg, #e02e24, #ff5722)', padding: '20px 24px', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ background: '#e40046', padding: '20px 24px', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <CreditCard size={20} />
@@ -81,7 +81,7 @@ export const MockPayOSStandalonePage: React.FC = () => {
             <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: 24 }}>
               Đơn hàng #{orderCode} đã được hệ thống xác nhận thanh toán qua PayOS.
             </p>
-            <a href="/orders" style={{ display: 'inline-block', background: '#e02e24', color: '#fff', textDecoration: 'none', padding: '10px 24px', borderRadius: 8, fontWeight: 700, fontSize: '0.9rem' }}>
+            <a href="/orders" style={{ display: 'inline-block', background: '#e40046', color: '#fff', textDecoration: 'none', padding: '10px 24px', borderRadius: 8, fontWeight: 700, fontSize: '0.9rem' }}>
               Xem danh sách đơn hàng
             </a>
           </div>
@@ -94,14 +94,14 @@ export const MockPayOSStandalonePage: React.FC = () => {
               </div>
               <div style={{ textAlign: 'right' }}>
                 <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Tổng số tiền:</span>
-                <div style={{ fontWeight: 800, fontSize: '1.25rem', color: '#e02e24' }}>{formatPrice(amount)}</div>
+                <div style={{ fontWeight: 800, fontSize: '1.25rem', color: '#e40046' }}>{formatPrice(amount)}</div>
               </div>
             </div>
 
             {/* QR Code */}
             <div style={{ textAlign: 'center', background: '#f8fafc', padding: 16, borderRadius: 12, border: '1px solid #e2e8f0', marginBottom: 16 }}>
               <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <QrCode size={16} color="#e02e24" /> Quét mã VietQR chuyển khoản
+                <QrCode size={16} color="#e40046" /> Quét mã VietQR chuyển khoản
               </div>
               <img
                 src={qrUrl}
@@ -123,7 +123,7 @@ export const MockPayOSStandalonePage: React.FC = () => {
                 <span style={{ color: '#64748b' }}>Số tài khoản:</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <strong>0987654321</strong>
-                  <button type="button" onClick={() => copy('0987654321', 'stk')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e02e24' }}>
+                  <button type="button" onClick={() => copy('0987654321', 'stk')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e40046' }}>
                     {copied === 'stk' ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
                   </button>
                 </div>
@@ -131,8 +131,8 @@ export const MockPayOSStandalonePage: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#f8fafc', borderRadius: 8 }}>
                 <span style={{ color: '#64748b' }}>Nội dung:</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <strong style={{ color: '#e02e24' }}>DH {orderCode}</strong>
-                  <button type="button" onClick={() => copy(`DH ${orderCode}`, 'nd')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e02e24' }}>
+                  <strong style={{ color: '#e40046' }}>DH {orderCode}</strong>
+                  <button type="button" onClick={() => copy(`DH ${orderCode}`, 'nd')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e40046' }}>
                     {copied === 'nd' ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
                   </button>
                 </div>
@@ -144,7 +144,7 @@ export const MockPayOSStandalonePage: React.FC = () => {
               type="button"
               onClick={handleConfirmPayment}
               disabled={loading}
-              style={{ width: '100%', background: '#e02e24', color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer' }}
+              style={{ width: '100%', background: '#e40046', color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer' }}
             >
               {loading ? 'Đang gửi xác nhận...' : '⚡ Xác nhận đã chuyển khoản thành công'}
             </button>

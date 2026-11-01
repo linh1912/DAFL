@@ -30,7 +30,7 @@ export const PaymentSuccessPage: React.FC = () => {
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
-              background: '#e02e24',
+              background: '#e40046',
               color: '#fff',
               textDecoration: 'none',
               padding: '12px 20px',

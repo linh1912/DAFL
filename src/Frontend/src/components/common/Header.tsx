@@ -1,7 +1,7 @@
 import React from 'react';
 import {
-  ShoppingBag, Search, Bell, Tag, LogOut, User as UserIcon,
-  Sun, Moon, ChevronDown, X, Package
+  ShoppingBag, Search, Bell, LogOut, User as UserIcon,
+  Sun, Moon, ChevronDown, X, Package, Store, Newspaper, Heart
 } from 'lucide-react';
 import { User } from '../../types';
 
@@ -43,21 +43,24 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCart,
 }) => {
   return (
-    <header className="header" data-testid="header">
+    <>
+      <div className="dafl-topbar" aria-label="Ưu đãi DAFL">
+        <span>MIỄN PHÍ VẬN CHUYỂN CHO ĐƠN TỪ 299.000Đ</span>
+        <span>ĐỔI TRẢ TRONG 30 NGÀY</span>
+        <span>HÀNG CHÍNH HÃNG 100%</span>
+      </div>
+      <header className="header" data-testid="header">
       <a
         href="/"
         onClick={(e) => { e.preventDefault(); onNavigate('home'); }}
         className="brand"
         data-testid="brand-logo"
       >
-        <div style={{
-          width: 38, height: 38, borderRadius: 10,
-          background: 'linear-gradient(135deg, #e02e24, #ff5722)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff'
-        }}>
-          <ShoppingBag size={22} />
-        </div>
-        <span>DAFL Store</span>
+        <span className="brand-mark">D</span>
+        <span className="brand-name">
+          DAFL
+          <small>MỸ PHẨM CHỌN LỌC</small>
+        </span>
       </a>
 
       {/* Search Bar with Clear button */}
@@ -66,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
         <input
           type="text"
           className="search-input"
-          placeholder="Tìm kiếm sản phẩm trong 26 ngành hàng..."
+          placeholder="Tìm kiếm sản phẩm, thương hiệu và nhu cầu làm đẹp..."
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           data-testid="search-input"
@@ -86,6 +89,21 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Header Actions */}
       <div className="header-actions">
+        <nav className="header-utilities" aria-label="Tiện ích DAFL">
+          <button type="button" className="header-utility" onClick={() => onNavigate('home')}>
+            <Store size={20} />
+            <span>Cửa hàng</span>
+          </button>
+          <button type="button" className="header-utility" onClick={() => onNavigate('home')}>
+            <Newspaper size={20} />
+            <span>Tạp chí</span>
+          </button>
+          <button type="button" className="header-utility" onClick={() => onNavigate('home')}>
+            <Heart size={20} />
+            <span>Yêu thích</span>
+          </button>
+        </nav>
+
         {/* Theme Switch Toggle Button */}
         <button
           type="button"
@@ -97,7 +115,7 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <div className="theme-toggle-switch">
             <div className="theme-toggle-knob">
-              {theme === 'dark' ? <Moon size={10} color="#1f2937" /> : <Sun size={10} color="#e02e24" />}
+              {theme === 'dark' ? <Moon size={10} color="#1f2937" /> : <Sun size={10} color="#e40046" />}
             </div>
           </div>
           <span>{theme === 'dark' ? 'Theme Tối' : 'Theme Sáng'}</span>
@@ -124,9 +142,9 @@ export const Header: React.FC<HeaderProps> = ({
             data-testid="account-toggle-btn"
           >
             <div className="account-avatar-mini">
-              {(user?.fullName || 'T').charAt(0).toUpperCase()}
+              {user ? user.fullName.charAt(0).toUpperCase() : <UserIcon size={20} />}
             </div>
-            <span className="account-toggle-name">{user ? user.fullName : 'Tài khoản'}</span>
+            <span className="account-toggle-name">{user ? user.fullName : 'Đăng nhập'}</span>
             <ChevronDown size={14} className={`dropdown-chevron ${isAccountDropdownOpen ? 'open' : ''}`} />
           </button>
 
@@ -198,8 +216,7 @@ export const Header: React.FC<HeaderProps> = ({
                 ) : (
                   <button
                     type="button"
-                    className="btn btn-primary"
-                    style={{ width: '100%', padding: '8px 14px', fontSize: '0.85rem' }}
+                    className="btn btn-primary dropdown-login-btn"
                     onClick={() => {
                       onOpenAuth();
                       setIsAccountDropdownOpen(false);
@@ -224,16 +241,13 @@ export const Header: React.FC<HeaderProps> = ({
           <ShoppingBag size={18} />
           <span>Giỏ hàng</span>
           {totalItemCount > 0 && (
-            <span
-              className="badge-count"
-              style={{ position: 'static', marginLeft: 4 }}
-              data-testid="cart-badge-count"
-            >
+            <span className="badge-count" data-testid="cart-badge-count">
               {totalItemCount}
             </span>
           )}
         </button>
       </div>
-    </header>
+      </header>
+    </>
   );
 };

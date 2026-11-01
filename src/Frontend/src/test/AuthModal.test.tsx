@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { AuthModal } from '../components/auth/AuthModal';
 
 describe('Authentication Module - AuthModal Component', () => {
@@ -122,5 +122,126 @@ describe('Authentication Module - AuthModal Component', () => {
   it('TC_AUTH_09: Should not render anything when isOpen is false', () => {
     const { container } = render(<AuthModal {...defaultProps} isOpen={false} />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it('TC_AUTH_10: Should render the exact gate notice when gateNotice is enabled', () => {
+    render(<AuthModal {...defaultProps} gateNotice={true} />);
+
+    expect(screen.getByTestId('auth-required-notice')).toHaveTextContent(
+      'Bạn chưa đăng nhập. Vui lòng đăng nhập để thêm sản phẩm vào giỏ hàng — hoặc đăng ký nếu chưa có tài khoản.'
+    );
+  });
+
+  it('TC_AUTH_11: Should show per-field login errors and remaining attempts', () => {
+    render(
+      <AuthModal
+        {...defaultProps}
+        loginEmailError="Email không đúng định dạng."
+        loginPasswordError="Email hoặc mật khẩu không chính xác."
+        loginFailureCount={3}
+      />
+    );
+
+    expect(screen.getByTestId('login-email-error')).toHaveTextContent('Email không đúng định dạng.');
+    expect(screen.getByTestId('login-password-error')).toHaveTextContent('Email hoặc mật khẩu không chính xác.');
+    expect(screen.getByTestId('login-attempts-warning')).toHaveTextContent(
+      'Còn 2 lần thử trước khi cần xác minh thêm.'
+    );
+    expect(screen.getByText('Đăng nhập bằng mã OTP')).toBeInTheDocument();
+    expect(screen.getByText('Quên mật khẩu?')).toBeInTheDocument();
+  });
+
+  it('TC_AUTH_12: Should include the digit rule in the registration password checklist', () => {
+    render(<AuthModal {...defaultProps} authTab="register" registerPassword="Password1!" />);
+
+    expect(screen.getByTestId('password-rule-len')).toBeInTheDocument();
+    expect(screen.getByTestId('password-rule-upper')).toBeInTheDocument();
+    expect(screen.getByTestId('password-rule-digit')).toHaveTextContent('Ít nhất 1 chữ số (0-9)');
+    expect(screen.getByTestId('password-rule-special')).toBeInTheDocument();
+  });
+
+  it('TC_AUTH_13: Should verify a registration code through six OTP inputs', async () => {
+    const onVerifyEmail = vi.fn(async () => null);
+    const onResendVerification = vi.fn(async () => null);
+    render(
+      <AuthModal
+        {...defaultProps}
+        verificationEmail="new@dafl.vn"
+        verificationNotice="Đã gửi mã xác thực về email của bạn."
+        onVerifyEmail={onVerifyEmail}
+        onResendVerification={onResendVerification}
+      />
+    );
+
+    expect(screen.getByTestId('register-verify-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('register-verify-resend')).toBeDisabled();
+
+    const inputs = within(screen.getByTestId('register-verify-otp-input')).getAllByRole('textbox');
+    inputs.forEach((input, index) => fireEvent.change(input, { target: { value: String(index + 1) } }));
+    fireEvent.click(screen.getByTestId('register-verify-btn'));
+
+    await waitFor(() => expect(onVerifyEmail).toHaveBeenCalledWith('123456'));
+  });
+
+  it('TC_AUTH_14: Should complete OTP login with request and verify callbacks', async () => {
+    const onOtpLoginRequest = vi.fn(async () => null);
+    const onOtpLoginVerify = vi.fn(async () => null);
+    render(
+      <AuthModal
+        {...defaultProps}
+        onOtpLoginRequest={onOtpLoginRequest}
+        onOtpLoginVerify={onOtpLoginVerify}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Đăng nhập bằng mã OTP'));
+    fireEvent.change(screen.getByTestId('otp-login-email-input'), {
+      target: { value: 'demo@dafl.vn' },
+    });
+    fireEvent.click(screen.getByTestId('otp-login-send-btn'));
+
+    await waitFor(() => expect(onOtpLoginRequest).toHaveBeenCalledWith('demo@dafl.vn'));
+    const inputs = within(await screen.findByTestId('otp-login-code-input')).getAllByRole('textbox');
+    inputs.forEach((input, index) => fireEvent.change(input, { target: { value: String(index + 1) } }));
+    fireEvent.click(screen.getByTestId('otp-login-verify-btn'));
+
+    await waitFor(() => expect(onOtpLoginVerify).toHaveBeenCalledWith('demo@dafl.vn', '123456'));
+  });
+
+  it('TC_AUTH_15: Should complete forgot-password request and reset steps', async () => {
+    const onForgotPasswordRequest = vi.fn(async () => null);
+    const onResetPassword = vi.fn(async () => null);
+    render(
+      <AuthModal
+        {...defaultProps}
+        onForgotPasswordRequest={onForgotPasswordRequest}
+        onResetPassword={onResetPassword}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Quên mật khẩu?'));
+    fireEvent.change(screen.getByTestId('forgot-email-input'), {
+      target: { value: 'demo@dafl.vn' },
+    });
+    fireEvent.click(screen.getByTestId('forgot-submit-btn'));
+
+    expect(await screen.findByText(
+      'Nếu email tồn tại trong hệ thống, mã xác nhận đã được gửi đến email của bạn.'
+    )).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('forgot-otp-input'), { target: { value: '123456' } });
+    fireEvent.change(screen.getByTestId('forgot-new-password-input'), {
+      target: { value: 'Newpass1!' },
+    });
+    fireEvent.change(screen.getByTestId('forgot-confirm-password-input'), {
+      target: { value: 'Newpass1!' },
+    });
+    fireEvent.click(screen.getByTestId('forgot-reset-btn'));
+
+    await waitFor(() => expect(onResetPassword).toHaveBeenCalledWith(
+      'demo@dafl.vn',
+      '123456',
+      'Newpass1!'
+    ));
+    expect(await screen.findByTestId('forgot-success-view')).toBeInTheDocument();
   });
 });

@@ -194,7 +194,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 10, borderTop: '1px solid var(--border-subtle)', fontSize: '1.2rem', fontWeight: 800 }}>
                     <span>Tổng thanh toán:</span>
-                    <span style={{ color: '#e02e24' }} data-testid="cart-final-total">{formatPrice(finalTotal)}</span>
+                    <span style={{ color: '#e40046' }} data-testid="cart-final-total">{formatPrice(finalTotal)}</span>
                   </div>
                 </div>
 
@@ -255,7 +255,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <div className="payos-summary-bar">
                 <div>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Số tiền thanh toán: </span>
-                  <strong style={{ color: '#e02e24', fontSize: '1.2rem' }} data-testid="payment-total-amount">
+                  <strong style={{ color: '#e40046', fontSize: '1.2rem' }} data-testid="payment-total-amount">
                     {formatPrice(checkoutResult.totalAmount)}
                   </strong>
                 </div>
