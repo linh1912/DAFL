@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import AdminPage from '../components/admin/AdminPage';
 
@@ -90,7 +90,9 @@ describe('AdminPage', () => {
     expect(screen.getByText('45.000.000đ')).toBeInTheDocument();
     expect(screen.getByText('Đơn chờ xử lý')).toBeInTheDocument();
     expect(screen.getByText('Khách mới 30 ngày')).toBeInTheDocument();
-    expect(screen.getByText('Son 3CE — còn 2')).toBeInTheDocument();
+    // SP sắp hết hàng giờ là bảng mini chuẩn: tên 1 cột, "còn N" là pill 1 cột khác.
+    expect(screen.getByText('Son 3CE')).toBeInTheDocument();
+    expect(screen.getByText('còn 2')).toBeInTheDocument();
     expect(screen.getByText(/SALE10/)).toBeInTheDocument();
   });
 
@@ -154,5 +156,114 @@ describe('AdminPage', () => {
     await waitFor(() => {
       expect(screen.getByTestId('login-page')).toBeInTheDocument();
     });
+  });
+
+  it('Sản phẩm: bấm mắt mở modal chi tiết (giá, đánh giá) + nút Sửa mở form', async () => {
+    globalThis.fetch = vi.fn((url: any) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('/api/admin/profile')) {
+        return respond(200, {
+          success: true,
+          data: { id: 'admin-1', email: 'admin@dafl.vn', fullName: 'Super Admin', role: 'SuperAdmin' },
+        });
+      }
+      if (urlStr.includes('/api/admin/dashboard')) {
+        return respond(200, {
+          success: true,
+          data: { revenueToday: 0, revenueThisMonth: 0, pendingOrders: 0, newCustomers30d: 0, ordersByStatus: {}, lowStockProducts: [], expiringVouchers: [] },
+        });
+      }
+      if (urlStr.includes('/api/admin/reports/revenue')) {
+        return respond(200, {
+          success: true,
+          data: { byDay: [], topProducts: [], totalOrders: 0, cancelledOrders: 0, cancelRate: 0, voucherOrders: 0, voucherUsageRate: 0 },
+        });
+      }
+      if (urlStr.includes('/api/products')) {
+        return respond(200, {
+          success: true,
+          data: [{ id: 'p1', categoryId: 'c1', categoryName: 'Son môi', name: 'Son kem 3CE', price: 250000, originalPrice: 300000, availableStock: 5, imageUrl: 'https://example.com/son.jpg', rating: 4.5, reviewCount: 12 }],
+        });
+      }
+      if (urlStr.includes('/api/admin/categories')) {
+        return respond(200, {
+          success: true,
+          data: [{ id: 'c1', name: 'Son môi', slug: 'son-moi', isActive: true, productCount: 1 }],
+        });
+      }
+      return respond(200, { success: true, data: [] });
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-products')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-products'));
+    await waitFor(() => {
+      expect(screen.getByText('Son kem 3CE')).toBeInTheDocument();
+    });
+    // Bảng có cột ảnh + đánh giá (rating/reviewCount từ PublicProduct).
+    expect(screen.getByText(/4.5/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Xem chi tiết sản phẩm Son kem 3CE'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-product-detail')).toBeInTheDocument();
+    });
+    const modal = within(screen.getByTestId('admin-product-detail'));
+    expect(modal.getByText('250.000đ')).toBeInTheDocument();
+    expect(modal.getByText(/4.5/)).toBeInTheDocument();
+    expect(modal.getByText('Son môi')).toBeInTheDocument();
+    // Nút Sửa trong modal mở form sửa đã có (giữ nguyên testid form).
+    fireEvent.click(modal.getByText('Sửa sản phẩm'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-product-form')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('admin-product-detail')).not.toBeInTheDocument();
+  });
+
+  it('Danh mục: bấm mắt mở modal chi tiết + nút Sửa mở form', async () => {
+    globalThis.fetch = vi.fn((url: any) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('/api/admin/profile')) {
+        return respond(200, {
+          success: true,
+          data: { id: 'admin-1', email: 'admin@dafl.vn', fullName: 'Super Admin', role: 'SuperAdmin' },
+        });
+      }
+      if (urlStr.includes('/api/admin/dashboard')) {
+        return respond(200, {
+          success: true,
+          data: { revenueToday: 0, revenueThisMonth: 0, pendingOrders: 0, newCustomers30d: 0, ordersByStatus: {}, lowStockProducts: [], expiringVouchers: [] },
+        });
+      }
+      if (urlStr.includes('/api/admin/reports/revenue')) {
+        return respond(200, {
+          success: true,
+          data: { byDay: [], topProducts: [], totalOrders: 0, cancelledOrders: 0, cancelRate: 0, voucherOrders: 0, voucherUsageRate: 0 },
+        });
+      }
+      if (urlStr.includes('/api/admin/categories')) {
+        return respond(200, {
+          success: true,
+          data: [{ id: 'c1', name: 'Son môi', slug: 'son-moi', description: 'Son các loại', isActive: true, sortOrder: 1, productCount: 3 }],
+        });
+      }
+      return respond(200, { success: true, data: [] });
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-categories')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-categories'));
+    await waitFor(() => {
+      expect(screen.getByText('Son môi')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByLabelText('Xem chi tiết danh mục Son môi'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-category-detail')).toBeInTheDocument();
+    });
+    const modal = within(screen.getByTestId('admin-category-detail'));
+    expect(modal.getByText('son-moi')).toBeInTheDocument();
+    expect(modal.getByText('Son các loại')).toBeInTheDocument();
   });
 });

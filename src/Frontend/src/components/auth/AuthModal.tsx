@@ -1,21 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { X, ArrowLeft, Eye, EyeOff } from 'lucide-react';
-import {
-  SocialProviderKey,
-  SOCIAL_PROVIDER_LABEL,
-  SOCIAL_MOCK_USERS,
-  SocialConfig,
-  FALLBACK_SOCIAL_CONFIG,
-  fetchSocialConfig,
-  isSocialMockMode,
-  isSocialRealMode,
-  isSocialProviderVisible,
-  signInWithGoogleSdk,
-  signInWithFacebookSdk,
-} from '../../utils/socialAuth';
-
-const SOCIAL_API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-
 const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
 const isValidVietnamesePhone = (phone: string) => /^0\d{9}$/.test(phone.trim());
@@ -23,7 +7,7 @@ const isValidVietnamesePhone = (phone: string) => /^0\d{9}$/.test(phone.trim());
 const ERROR_COLOR = '#d81b60';
 const SUCCESS_GREEN = '#16a34a';
 
-const fieldErrorStyle: React.CSSProperties = { color: ERROR_COLOR, fontSize: '0.8rem', marginTop: 6 };
+const fieldErrorStyle: React.CSSProperties = { color: ERROR_COLOR, fontSize: '0.85rem', marginTop: 6 };
 const errorBorderStyle = (hasError: boolean): React.CSSProperties =>
   hasError ? { borderColor: ERROR_COLOR } : {};
 
@@ -59,7 +43,7 @@ export const PasswordRuleList: React.FC<PasswordRuleListProps> = ({ password, te
         gridTemplateColumns: '1fr 1fr',
         gap: '6px 12px',
         marginTop: 8,
-        fontSize: '0.75rem',
+        fontSize: '0.8rem',
       }}
     >
       {rules.map(rule => (
@@ -115,28 +99,11 @@ export interface AuthModalProps {
   registerSuccess?: boolean;
   /** Phiên JWT hết hạn (401) → hiện `session-expired-notice` (CN-02 E3). */
   sessionExpired?: boolean;
-  /** Đăng nhập social thật: nhận token của nhà cung cấp, trả về thông điệp lỗi hoặc null khi thành công. */
-  onSocialLogin?: (provider: SocialProviderKey, token: string) => Promise<string | null>;
-  /** Đăng nhập social giả lập (môi trường test): trả về thông điệp lỗi hoặc null khi thành công. */
-  onSocialMockLogin?: (provider: SocialProviderKey) => Promise<string | null>;
-  /** Gốc API để lấy /api/auth/social/config; mặc định lấy từ biến môi trường như App. */
-  socialApiBase?: string;
+  /** Chế độ admin-riêng (localhost:3001): chỉ form đăng nhập cơ bản —
+   *  KHÔNG tab/link đăng ký (đăng nhập social đã bỏ hẳn ở mọi nơi),
+   *  KHÔNG link quên mật khẩu (AuthModal không có link này). */
+  adminOnly?: boolean;
 }
-
-const GoogleLogo: React.FC = () => (
-  <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true" style={{ flexShrink: 0 }}>
-    <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
-    <path fill="#FF3D00" d="m6.306 14.691 6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" />
-    <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z" />
-    <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
-  </svg>
-);
-
-const FacebookLogo: React.FC = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" style={{ flexShrink: 0 }}>
-    <path fill="#1877F2" d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047v-2.66c0-3.025 1.792-4.697 4.533-4.697 1.313 0 2.686.236 2.686.236v2.971H15.83c-1.491 0-1.956.93-1.956 1.886v2.264h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z" />
-  </svg>
-);
 
 interface LoginFieldErrors {
   email: string | null;
@@ -173,9 +140,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   registerFieldErrors,
   registerSuccess = false,
   sessionExpired = false,
-  onSocialLogin,
-  onSocialMockLogin,
-  socialApiBase,
+  adminOnly = false,
 }) => {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
@@ -188,31 +153,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // Lỗi validate phía client của form đăng ký, theo từng ô.
   const [registerErrors, setRegisterErrors] = useState<RegisterFieldErrors>({});
 
-  // Đăng nhập mạng xã hội: cấu hình công khai từ BE + panel mock.
-  const [socialConfig, setSocialConfig] = useState<SocialConfig | null>(null);
-  const [socialError, setSocialError] = useState<string | null>(null);
-  const [socialBusyProvider, setSocialBusyProvider] = useState<SocialProviderKey | null>(null);
-  const [mockProvider, setMockProvider] = useState<SocialProviderKey | null>(null);
-  const resolvedSocialApiBase = socialApiBase ?? SOCIAL_API_BASE;
-
-  useEffect(() => {
-    if (!isOpen) return;
-    let cancelled = false;
-    fetchSocialConfig(resolvedSocialApiBase).then(config => {
-      if (!cancelled) setSocialConfig(config);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, resolvedSocialApiBase]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      setSocialError(null);
-      setMockProvider(null);
-    }
-  }, [isOpen]);
-
   // Chuyển tab (kể cả khi đổi route /login <-> /register) là xóa sạch lỗi cũ.
   useEffect(() => {
     setLoginErrors({ email: null, password: null });
@@ -224,78 +164,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoginErrors({ email: null, password: null });
     setLoginEmailTouched(false);
     setRegisterErrors({});
-    setSocialError(null);
-    setMockProvider(null);
     if (onClearAuthErrors) onClearAuthErrors();
     setAuthTab(tab);
-  };
-
-  // ----------------------------------------
-  // Đăng nhập mạng xã hội (Google / Facebook)
-  // ----------------------------------------
-  const effectiveSocialConfig = socialConfig ?? FALLBACK_SOCIAL_CONFIG;
-
-  const handleSocialClick = async (provider: SocialProviderKey) => {
-    const config = effectiveSocialConfig;
-    const label = SOCIAL_PROVIDER_LABEL[provider];
-    setSocialError(null);
-    if (isSocialMockMode(config, provider)) {
-      // Môi trường test/dev chưa cấu hình provider thật: mở panel giả lập.
-      setMockProvider(provider);
-      return;
-    }
-    if (!isSocialRealMode(config, provider)) return;
-    if (!onSocialLogin) {
-      setSocialError('Chức năng đăng nhập mạng xã hội chưa được kết nối.');
-      return;
-    }
-    setSocialBusyProvider(provider);
-    try {
-      const result =
-        provider === 'google'
-          ? await signInWithGoogleSdk(config.googleClientId as string)
-          : await signInWithFacebookSdk(config.facebookAppId as string);
-      if (result.type === 'token') {
-        const error = await onSocialLogin(provider, result.token);
-        if (error) setSocialError(error);
-      } else if (result.type === 'cancelled') {
-        setSocialError(`Bạn đã hủy đăng nhập bằng ${label}. Vui lòng thử lại hoặc dùng email và mật khẩu.`);
-      } else {
-        setSocialError(`Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`);
-      }
-    } catch {
-      setSocialError(`Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`);
-    } finally {
-      setSocialBusyProvider(null);
-    }
-  };
-
-  const handleSocialMockConfirm = async () => {
-    if (!mockProvider) return;
-    const provider = mockProvider;
-    if (!onSocialMockLogin) {
-      setSocialError('Chức năng đăng nhập mạng xã hội chưa được kết nối.');
-      return;
-    }
-    setSocialBusyProvider(provider);
-    setSocialError(null);
-    try {
-      const error = await onSocialMockLogin(provider);
-      if (error) {
-        setSocialError(error);
-      } else {
-        setMockProvider(null);
-      }
-    } finally {
-      setSocialBusyProvider(null);
-    }
-  };
-
-  const handleSocialMockCancel = () => {
-    if (!mockProvider) return;
-    const label = SOCIAL_PROVIDER_LABEL[mockProvider];
-    setMockProvider(null);
-    setSocialError(`Bạn đã hủy đăng nhập bằng ${label}. Vui lòng thử lại hoặc dùng email và mật khẩu.`);
   };
 
   // ----------------------------------------
@@ -303,7 +173,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // ----------------------------------------
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const email = loginEmail.trim().toLowerCase();
+    // Chế độ admin-riêng: nhập "admin" cũng đăng nhập được bằng tài khoản admin@dafl.vn.
+    const rawEmail = loginEmail.trim().toLowerCase();
+    const email = adminOnly && rawEmail === 'admin' ? 'admin@dafl.vn' : rawEmail;
     const errors: LoginFieldErrors = { email: null, password: null };
     if (!email) {
       errors.email = 'Email không được để trống.';
@@ -394,12 +266,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     onRegister(e, values);
   };
 
-  const authTitle = authTab === 'login' ? 'Đăng nhập tài khoản' : 'Đăng ký thành viên mới';
+  // Chế độ admin-riêng ép về tab đăng nhập dù App có truyền tab khác.
+  const effectiveTab = adminOnly ? 'login' : authTab;
+  const authTitle = adminOnly ? 'Đăng nhập quản trị' : authTab === 'login' ? 'Đăng nhập tài khoản' : 'Đăng ký thành viên mới';
 
+  // "admin" là tên đăng nhập hợp lệ ở chế độ admin-riêng (map sang admin@dafl.vn khi submit).
+  const loginEmailForCheck = adminOnly && loginEmail.trim().toLowerCase() === 'admin' ? 'admin@dafl.vn' : loginEmail;
   const shownLoginEmailError =
     loginErrors.email ??
     loginEmailError ??
-    (loginEmailTouched && loginEmail.trim() && !isValidEmail(loginEmail)
+    (loginEmailTouched && loginEmailForCheck.trim() && !isValidEmail(loginEmailForCheck)
       ? 'Email không đúng định dạng.'
       : null);
   const shownLoginPasswordError = loginErrors.password ?? loginPasswordError;
@@ -445,7 +321,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           )}
         </div>
 
-        {/* Tabs */}
+        {/* Tabs — ẩn hẳn ở chế độ admin-riêng (chỉ có đăng nhập) */}
+        {!adminOnly && (
         <div className="modal-tabs">
           <button
             type="button"
@@ -464,8 +341,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             Đăng ký
           </button>
         </div>
+        )}
 
-        {sessionExpired && authTab === 'login' && (
+        {sessionExpired && effectiveTab === 'login' && (
           <div
             data-testid="session-expired-notice"
             style={{
@@ -483,7 +361,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         )}
 
-        {registerSuccess && authTab === 'login' && (
+        {registerSuccess && effectiveTab === 'login' && (
           <div
             data-testid="register-success-msg"
             style={{
@@ -518,10 +396,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         )}
 
-        {authTab === 'login' ? (
+        {effectiveTab === 'login' ? (
           <form onSubmit={handleLoginSubmit} noValidate data-testid="login-form">
             <div className="form-group">
-              <label className="form-label" htmlFor="login-email">Email đăng nhập</label>
+              <label className="form-label" htmlFor="login-email">{adminOnly ? 'Tên đăng nhập hoặc email' : 'Email đăng nhập'}</label>
               <input
                 id="login-email"
                 className="form-input"
@@ -590,6 +468,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             >
               {authLoading ? 'Đang xử lý...' : 'Đăng nhập'}
             </button>
+            {adminOnly && (
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 12, textAlign: 'center' }}>
+                Tài khoản mặc định: admin / Admin@123
+              </p>
+            )}
           </form>
         ) : (
           <form onSubmit={handleRegisterSubmit} noValidate data-testid="register-form">
@@ -765,105 +648,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </form>
         )}
 
-        {/* Khối đăng nhập nhanh bằng mạng xã hội — hiện ở cả hai tab */}
-        <div style={{ marginTop: 22 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-            <span style={{ flex: 1, height: 1, background: 'var(--border-subtle)' }} />
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>hoặc tiếp tục với</span>
-            <span style={{ flex: 1, height: 1, background: 'var(--border-subtle)' }} />
-          </div>
-
-          {socialError && (
-            <div data-testid="social-error" style={{ color: ERROR_COLOR, fontSize: '0.85rem', marginBottom: 12 }}>
-              {socialError}
-            </div>
-          )}
-          {socialBusyProvider && (
-            <div data-testid="social-loading" style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: 12 }}>
-              Đang kết nối với {SOCIAL_PROVIDER_LABEL[socialBusyProvider]}...
-            </div>
-          )}
-
-          <div style={{ display: 'grid', gap: 10 }}>
-            {(['google', 'facebook'] as SocialProviderKey[]).map(provider => {
-              if (!isSocialProviderVisible(effectiveSocialConfig, provider)) return null;
-              const label = SOCIAL_PROVIDER_LABEL[provider];
-              return (
-                <button
-                  key={provider}
-                  type="button"
-                  data-testid={`social-${provider}-btn`}
-                  data-mock={isSocialMockMode(effectiveSocialConfig, provider) ? 'true' : undefined}
-                  onClick={() => handleSocialClick(provider)}
-                  disabled={busy || socialBusyProvider !== null}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 10,
-                    width: '100%',
-                    padding: '11px 14px',
-                    background: '#fff',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 10,
-                    fontSize: '0.9rem',
-                    fontWeight: 600,
-                    color: 'var(--text-main)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {provider === 'google' ? <GoogleLogo /> : <FacebookLogo />}
-                  Tiếp tục với {label}
-                </button>
-              );
-            })}
-          </div>
-
-          {mockProvider && (
-            <div
-              data-testid="social-mock-panel"
-              style={{
-                marginTop: 14,
-                border: '1px dashed #f59e0b',
-                background: '#fff8e1',
-                borderRadius: 10,
-                padding: '14px 16px',
-              }}
-            >
-              <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: 6 }}>
-                Môi trường kiểm thử — đăng nhập giả lập
-              </div>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0 0 4px', lineHeight: 1.5 }}>
-                Bạn đang đăng nhập bằng {SOCIAL_PROVIDER_LABEL[mockProvider]} với tài khoản mẫu:
-              </p>
-              <p style={{ fontSize: '0.9rem', margin: '0 0 12px' }}>
-                <strong>{SOCIAL_MOCK_USERS[mockProvider].fullName}</strong> — {SOCIAL_MOCK_USERS[mockProvider].email}
-              </p>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ padding: '9px 16px' }}
-                  onClick={handleSocialMockConfirm}
-                  disabled={socialBusyProvider !== null}
-                  data-testid="social-mock-confirm-btn"
-                >
-                  Đồng ý đăng nhập
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  style={{ padding: '9px 16px' }}
-                  onClick={handleSocialMockCancel}
-                  disabled={socialBusyProvider !== null}
-                  data-testid="social-mock-cancel-btn"
-                >
-                  Hủy
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

@@ -19,7 +19,7 @@ import {
 
 const MAX_ADDRESSES = 5;
 const ERROR_COLOR = '#d81b60';
-const fieldErrorStyle: React.CSSProperties = { color: ERROR_COLOR, fontSize: '0.8rem', marginTop: 6 };
+const fieldErrorStyle: React.CSSProperties = { color: ERROR_COLOR, fontSize: '0.85rem', marginTop: 6 };
 const errorBorder = (hasError: boolean): React.CSSProperties => (hasError ? { borderColor: ERROR_COLOR } : {});
 
 const isValidVietnamesePhone = (phone: string) => /^0\d{9}$/.test(phone.trim());
@@ -241,7 +241,7 @@ export const AddressBook: React.FC = () => {
           <Plus size={15} /> Thêm địa chỉ
         </button>
       </div>
-      <p style={{ color: 'var(--text-muted)', fontSize: '0.83rem', margin: '8px 0 0' }}>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: '8px 0 0' }}>
         Tối đa {MAX_ADDRESSES} địa chỉ. Địa chỉ đầu tiên tự động là mặc định; khi đặt hàng bạn có thể chọn địa chỉ khác trong sổ.
       </p>
 
@@ -279,7 +279,7 @@ export const AddressBook: React.FC = () => {
                   {composeFullAddress(address)}
                 </div>
                 {address.note && (
-                  <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 2 }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 2 }}>
                     Ghi chú: {address.note}
                   </div>
                 )}

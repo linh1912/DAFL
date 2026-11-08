@@ -49,16 +49,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         <h3 className="product-name" data-testid={`product-name-${product.id}`}>
           {product.name}
         </h3>
-        <div className="product-shop" data-testid={`product-shop-${product.id}`}>
-          <Store size={12} /> {shopNameFor(product)}
-        </div>
+        <div className="product-shop-row">
+          <div className="product-shop" data-testid={`product-shop-${product.id}`}>
+            <Store size={12} /> {shopNameFor(product)}
+          </div>
 
-        <div className="product-meta">
-          <span className="product-rating">
-            <Star size={13} fill="#f5a623" color="#f5a623" />
-            {product.rating ? product.rating.toFixed(1) : '5.0'}
-          </span>
-          <span>({product.reviewCount || 0})</span>
+          <div className="product-meta">
+            <span className="product-rating">
+              <Star size={13} fill="#f5a623" color="#f5a623" />
+              {product.rating ? product.rating.toFixed(1) : '5.0'}
+            </span>
+            <span>({product.reviewCount || 0})</span>
+          </div>
         </div>
 
         <div className="product-footer">

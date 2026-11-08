@@ -442,10 +442,10 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
                     onChange={() => selectSavedAddress(address)}
                     style={{ marginTop: 3 }}
                   />
-                  <span style={{ fontSize: '0.85rem', lineHeight: 1.5 }}>
+                  <span style={{ fontSize: '0.9rem', lineHeight: 1.5 }}>
                     <strong>{address.recipientName}</strong> — {address.phone}
                     {address.isDefault && (
-                      <span style={{ marginLeft: 8, fontSize: '0.72rem', fontWeight: 700, color: 'var(--primary)' }}>
+                      <span style={{ marginLeft: 8, fontSize: '0.78rem', fontWeight: 700, color: 'var(--primary)' }}>
                         MẶC ĐỊNH
                       </span>
                     )}
@@ -575,7 +575,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
                     }}
                     style={errorBorder(!!errors.district)}
                   >
-                    <option value="">— Chọn Quận / Huyện —</option>
+                    <option value="">— Chọn quận —</option>
                     {(selectedProvince?.districts ?? []).map(district => (
                       <option key={district.code} value={district.code}>
                         {district.name}
@@ -604,7 +604,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
                     }}
                     style={errorBorder(!!errors.ward)}
                   >
-                    <option value="">— Chọn Phường / Xã —</option>
+                    <option value="">— Chọn phường —</option>
                     {(selectedDistrict?.wards ?? []).map(ward => (
                       <option key={ward.code} value={ward.code}>
                         {ward.name}
@@ -795,7 +795,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
       <button
         type="submit"
         className="btn btn-primary checkout-submit-btn"
-        style={{ width: '100%', padding: '14px', marginTop: 10 }}
+        style={{ width: '100%', height: 52, padding: '0 14px', marginTop: 10, borderRadius: 12, fontSize: '1rem' }}
         disabled={isCheckingOut}
         data-testid="cart-checkout-btn"
       >

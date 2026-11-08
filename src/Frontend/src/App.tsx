@@ -24,7 +24,6 @@ import { resolveGalleryImages } from './utils/images';
 import { timeAgoVi } from './utils/shops';
 import { CartDrawer } from './components/cart/CartDrawer';
 import { AuthModal, RegisterFormValues, RegisterFieldErrors, PasswordRuleList } from './components/auth/AuthModal';
-import { SocialProviderKey, SOCIAL_PROVIDER_LABEL } from './utils/socialAuth';
 import { CheckoutFormValues } from './components/checkout/CheckoutForm';
 import { PayOSGatewayView } from './components/checkout/PayOSGatewayView';
 import { AddressBook } from './components/profile/AddressBook';
@@ -314,7 +313,7 @@ export default function App() {
   const [cpSuccess, setCpSuccess] = useState(false);
   const [cpBusy, setCpBusy] = useState(false);
 
-  // Đặt mật khẩu cho tài khoản social (CN-03) — chỉ khi tài khoản chưa có mật khẩu
+  // Đặt mật khẩu cho tài khoản chưa có mật khẩu (CN-03)
   const [setPasswordValue, setSetPasswordValue] = useState('');
   const [setPasswordConfirm, setSetPasswordConfirm] = useState('');
   const [setPasswordError, setSetPasswordError] = useState<string | null>(null);
@@ -501,6 +500,18 @@ export default function App() {
     }, 350);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Nút "Áp dụng" cho khoảng giá: áp dụng ngay cùng phép tính với debounce bên dưới.
+  const applyPriceFilterNow = () => {
+    const from = priceFromText.trim() === '' ? null : Number(priceFromText.replace(/[^\d]/g, ''));
+    const to = priceToText.trim() === '' ? null : Number(priceToText.replace(/[^\d]/g, ''));
+    if (from !== null && to !== null && from > to) {
+      setPriceFilterError('Giá bắt đầu không được lớn hơn giá đến.');
+      return;
+    }
+    setPriceFilterError(null);
+    setPriceRange(prev => (prev.from === from && prev.to === to ? prev : { from, to }));
+  };
 
   // Debounce khoảng giá: from > to → lỗi price-filter-error và KHÔNG áp dụng lọc (CN-04.2)
   useEffect(() => {
@@ -1230,7 +1241,7 @@ export default function App() {
   };
 
   /**
-   * Hoàn tất đăng nhập (mật khẩu/social): lưu JWT, merge giỏ khách vào giỏ server
+   * Hoàn tất đăng nhập (mật khẩu): lưu JWT, merge giỏ khách vào giỏ server
    * (CN-06.6) rồi quay lại trang đã lưu (E4) hoặc về trang chủ từ trang auth.
    */
   const completeAuthentication = async (
@@ -1291,7 +1302,10 @@ export default function App() {
     e.preventDefault();
     clearAuthErrors();
 
-    const normalizedEmail = (values?.email ?? loginEmail).trim().toLowerCase();
+    const rawEmail = (values?.email ?? loginEmail).trim().toLowerCase();
+    // Chế độ admin-riêng: nhập "admin" cũng đăng nhập bằng tài khoản admin@dafl.vn
+    // (AuthModal đã chuẩn hóa; đây là lớp đảm bảo nếu email đi qua state App).
+    const normalizedEmail = IS_ADMIN_ONLY && rawEmail === 'admin' ? 'admin@dafl.vn' : rawEmail;
     const password = values?.password ?? loginPassword;
     if (normalizedEmail !== loginEmail) setLoginEmail(normalizedEmail);
 
@@ -1388,62 +1402,7 @@ export default function App() {
     }
   };
 
-  // ------------------------------------------
-  // Đăng nhập mạng xã hội: token/mock → BE xác thực → JWT như đăng nhập thường
-  // ------------------------------------------
-  const handleSocialLogin = async (provider: SocialProviderKey, token: string): Promise<string | null> => {
-    const label = SOCIAL_PROVIDER_LABEL[provider];
-    setAuthLoading(true);
-    try {
-      const endpoint = provider === 'google' ? '/api/auth/social/google' : '/api/auth/social/facebook';
-      const reqBody = provider === 'google' ? { idToken: token } : { accessToken: token };
-      const { status, body } = await apiJson<AuthResult>(endpoint, {
-        method: 'POST',
-        skipAuthHandler: true,
-        body: JSON.stringify(reqBody),
-      });
-      const json = body as (ApiResponse<AuthResult> & { code?: string; errorCode?: string }) | null;
-      if (json?.success && json.data && json.data.token && json.data.user) {
-        await completeAuthentication(json.data, 'Đăng nhập thành công', json.message || undefined);
-        return null;
-      }
-      const code = json?.code || json?.errorCode;
-      if (code === 'SOCIAL_EMAIL_REQUIRED') {
-        return `Tài khoản ${label} của bạn không chia sẻ email. Vui lòng đăng ký bằng email để tiếp tục.`;
-      }
-      if (status === 401) {
-        return `Phiên đăng nhập ${label} đã hết hạn hoặc không hợp lệ. Vui lòng thử lại.`;
-      }
-      return json ? getResponseError(json, `Phiên đăng nhập ${label} đã hết hạn hoặc không hợp lệ. Vui lòng thử lại.`) : `Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`;
-    } catch {
-      return `Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`;
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleSocialMockLogin = async (provider: SocialProviderKey): Promise<string | null> => {
-    const label = SOCIAL_PROVIDER_LABEL[provider];
-    setAuthLoading(true);
-    try {
-      const { body } = await apiJson<AuthResult>('/api/auth/social/mock', {
-        method: 'POST',
-        skipAuthHandler: true,
-        body: JSON.stringify({ provider: label }),
-      });
-      if (body?.success && body.data && body.data.token && body.data.user) {
-        await completeAuthentication(body.data, 'Đăng nhập thành công', body.message || undefined);
-        return null;
-      }
-      return body ? getResponseError(body, `Không thể đăng nhập bằng ${label}. Vui lòng thử lại.`) : `Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`;
-    } catch {
-      return `Không kết nối được với ${label}. Vui lòng kiểm tra mạng và thử lại.`;
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  // Đặt mật khẩu cho tài khoản social chưa có mật khẩu (trang Hồ sơ, CN-03).
+  // Đặt mật khẩu cho tài khoản chưa có mật khẩu (trang Hồ sơ, CN-03).
   const handleSetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setSetPasswordError(null);
@@ -1885,8 +1844,6 @@ export default function App() {
     sessionExpired,
     onLogin: handleLogin,
     onRegister: handleRegister,
-    onSocialLogin: handleSocialLogin,
-    onSocialMockLogin: handleSocialMockLogin,
     onClearAuthErrors: clearAuthErrors,
   };
 
@@ -1961,6 +1918,7 @@ export default function App() {
                 {...commonAuthProps}
                 isOpen={true}
                 isModal={false}
+                adminOnly
                 onClose={handleAuthClose}
                 authTab="login"
                 setAuthTab={(tab) => {
@@ -2170,6 +2128,14 @@ export default function App() {
                           {priceFilterError}
                         </div>
                       )}
+                      <button
+                        type="button"
+                        className="btn btn-secondary price-apply-btn"
+                        onClick={applyPriceFilterNow}
+                        data-testid="price-apply-btn"
+                      >
+                        Áp dụng
+                      </button>
                     </div>
 
                     <div className="filter-group">
@@ -2400,7 +2366,7 @@ export default function App() {
                       <button
                         type="button"
                         className="btn btn-secondary"
-                        style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                        style={{ padding: '8px 14px', fontSize: '0.85rem' }}
                         onClick={() => navigateTo('home')}
                       >
                         <ArrowLeft size={16} /> Tiếp tục mua sắm
@@ -3084,7 +3050,7 @@ export default function App() {
                     </form>
                   )}
 
-                  {/* Đặt mật khẩu — chỉ hiện khi tài khoản (social) chưa có mật khẩu */}
+                  {/* Đặt mật khẩu — chỉ hiện khi tài khoản chưa có mật khẩu */}
                   {user && !setPasswordDone && (user.hasPassword === false || (user.hasPassword === undefined && !!user.authProvider)) && (
                     <form
                       onSubmit={handleSetPassword}
@@ -3235,10 +3201,10 @@ export default function App() {
                       </div>
 
                       <div>
-                        <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: 8, color: 'var(--text-main)' }}>{selectedProduct.name}</h2>
+                        <h2 style={{ fontSize: '1.6rem', fontWeight: 800, marginBottom: 8, color: 'var(--text-main)' }}>{selectedProduct.name}</h2>
 
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
-                          <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#d81b60' }}>
+                          <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#d81b60' }}>
                             {formatPrice(selectedProduct.price)}
                           </span>
                           {selectedProduct.originalPrice && (
@@ -3247,7 +3213,7 @@ export default function App() {
                             </span>
                           )}
                           {selectedProduct.originalPrice && selectedProduct.originalPrice > selectedProduct.price && (
-                            <span style={{ fontSize: '0.8rem', background: 'rgba(228, 0, 70, 0.1)', color: '#d81b60', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
+                            <span style={{ fontSize: '0.8rem', background: 'rgba(228, 0, 70, 0.1)', color: '#d81b60', padding: '2px 8px', borderRadius: 8, fontWeight: 700 }}>
                               Tiết kiệm {formatPrice(selectedProduct.originalPrice - selectedProduct.price)}
                             </span>
                           )}
@@ -3273,7 +3239,7 @@ export default function App() {
                         {selectedProduct.availableStock <= 0 ? (
                           <div
                             data-testid="detail-out-of-stock-notice"
-                            style={{ background: 'rgba(228, 0, 70, 0.08)', border: '1px solid rgba(228, 0, 70, 0.3)', color: '#b91c1c', borderRadius: 8, padding: '10px 14px', fontSize: '0.88rem', marginBottom: 20 }}
+                            style={{ background: 'rgba(228, 0, 70, 0.08)', border: '1px solid rgba(228, 0, 70, 0.3)', color: '#b91c1c', borderRadius: 12, padding: '10px 14px', fontSize: '0.88rem', marginBottom: 20 }}
                           >
                             Sản phẩm đã hết hàng — hiện không thể thêm vào giỏ hoặc mua ngay.
                           </div>
@@ -3305,7 +3271,7 @@ export default function App() {
                                 <Plus size={14} />
                               </button>
                             </div>
-                            <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
+                            <span style={{ fontSize: '0.85rem', color: '#9ca3af' }}>
                               (Còn {selectedProduct.availableStock} sản phẩm có sẵn)
                             </span>
                           </div>
@@ -3733,7 +3699,7 @@ export default function App() {
           element={
             <div style={{ padding: '3rem 1rem', maxWidth: 720, margin: '0 auto', textAlign: 'center' }} data-testid="not-found-page">
               <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }} aria-hidden="true">🔍</div>
-              <h1 style={{ fontSize: '2.2rem', color: '#d81b60', margin: '0 0 0.5rem' }}>Không tìm thấy trang</h1>
+              <h1 style={{ fontSize: '1.9rem', color: '#d81b60', margin: '0 0 0.5rem' }}>Không tìm thấy trang</h1>
               <p style={{ color: '#555', margin: '0 0 1.5rem' }}>Trang bạn vừa mở không tồn tại hoặc đã được chuyển đi nơi khác.</p>
               <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
                 <button type="button" className="btn btn-primary" onClick={() => navigate('/')}>Về trang chủ</button>
@@ -3751,7 +3717,7 @@ export default function App() {
       {/* ============================================================== */}
       {isNotifOpen && (
         <div className="modal-overlay" onClick={() => setIsNotifOpen(false)} data-testid="notifications-modal">
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 600 }}>
+          <div className="modal-content notif-modal" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 520 }}>
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Bell size={20} color="var(--primary)" />
@@ -3760,32 +3726,31 @@ export default function App() {
                   <span className="badge-count" style={{ position: 'static' }}>{unreadCount} mới</span>
                 )}
               </div>
-              <button
-                type="button"
-                className="close-btn"
-                onClick={() => setIsNotifOpen(false)}
-                data-testid="close-notif-btn"
-              >
-                <X size={20} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <button
+                  type="button"
+                  className="notif-mark-all-btn"
+                  onClick={markAllNotificationsAsRead}
+                  data-testid="mark-all-read-btn"
+                >
+                  Đánh dấu đã đọc tất cả
+                </button>
+                <button
+                  type="button"
+                  className="close-btn"
+                  onClick={() => setIsNotifOpen(false)}
+                  data-testid="close-notif-btn"
+                >
+                  <X size={20} />
+                </button>
+              </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <button
-                type="button"
-                style={{ background: 'none', border: 'none', color: '#d81b60', cursor: 'pointer', fontSize: '0.8rem' }}
-                onClick={markAllNotificationsAsRead}
-                data-testid="mark-all-read-btn"
-              >
-                Đánh dấu đã đọc tất cả
-              </button>
-            </div>
-
-            <div style={{ maxHeight: 440, overflowY: 'auto' }}>
+            <div className="notif-list" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
               {notifications.length === 0 ? (
                 <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px 0' }}>
                   <Bell size={40} style={{ margin: '0 auto 8px', opacity: 0.3 }} />
-                  <p>Không có thông báo nào.</p>
+                  <p>Chưa có thông báo</p>
                 </div>
               ) : (
                 notifications.map(n => {

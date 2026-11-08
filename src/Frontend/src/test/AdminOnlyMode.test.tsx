@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
@@ -93,5 +93,47 @@ describe('Admin-only mode (VITE_ADMIN_ONLY=true)', () => {
       expect(screen.getByTestId('admin-page')).toBeInTheDocument();
     });
     expect(screen.queryByTestId('hero-carousel')).not.toBeInTheDocument();
+  });
+
+  it('admin-only /login: chỉ form cơ bản, không social, không tab đăng ký, có gợi ý tài khoản mặc định', async () => {
+    const { default: App } = await import('../App');
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('login-form')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('social-google-btn')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('social-facebook-btn')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('auth-tab-register')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('register-form')).not.toBeInTheDocument();
+    expect(screen.getByText('Tên đăng nhập hoặc email')).toBeInTheDocument();
+    expect(screen.getByText('Tài khoản mặc định: admin / Admin@123')).toBeInTheDocument();
+  });
+
+  it('admin-only /login: nhập "admin" được map sang admin@dafl.vn khi gọi API đăng nhập', async () => {
+    const { default: App } = await import('../App');
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('login-form')).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByTestId('login-email-input'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByTestId('login-password-input'), { target: { value: 'Admin@123' } });
+    fireEvent.click(screen.getByTestId('login-submit-btn'));
+
+    await waitFor(() => {
+      const calls = (globalThis.fetch as any).mock.calls as Array<[string, RequestInit?]>;
+      const loginCall = calls.find(([url]) => typeof url === 'string' && url.includes('/api/auth/login'));
+      expect(loginCall).toBeDefined();
+      expect(JSON.parse(String(loginCall![1]?.body))).toEqual({ email: 'admin@dafl.vn', password: 'Admin@123' });
+    });
   });
 });

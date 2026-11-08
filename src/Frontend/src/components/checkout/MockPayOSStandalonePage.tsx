@@ -54,17 +54,17 @@ export const MockPayOSStandalonePage: React.FC = () => {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: "'Be Vietnam Pro', system-ui, -apple-system, sans-serif" }}>
       <div style={{ background: '#fff', maxWidth: 480, width: '100%', borderRadius: 16, boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
         {/* Header */}
         <div style={{ background: '#d81b60', padding: '20px 24px', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 36, height: 36, borderRadius: 12, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <CreditCard size={20} />
             </div>
             <div>
               <div style={{ fontWeight: 800, fontSize: '1.1rem' }}>Cổng thanh toán PayOS</div>
-              <div style={{ fontSize: '0.75rem', opacity: 0.9 }}>Môi trường giả lập VietQR Sandbox</div>
+              <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>Môi trường giả lập VietQR Sandbox</div>
             </div>
           </div>
           <a href="/" style={{ color: '#fff', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.8rem', opacity: 0.85 }}>
@@ -81,7 +81,7 @@ export const MockPayOSStandalonePage: React.FC = () => {
             <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: 24 }}>
               Đơn hàng #{orderCode} đã được hệ thống xác nhận thanh toán qua PayOS.
             </p>
-            <a href="/orders" style={{ display: 'inline-block', background: '#d81b60', color: '#fff', textDecoration: 'none', padding: '10px 24px', borderRadius: 8, fontWeight: 700, fontSize: '0.9rem' }}>
+            <a href="/orders" style={{ display: 'inline-block', background: '#d81b60', color: '#fff', textDecoration: 'none', padding: '10px 24px', borderRadius: 12, fontWeight: 700, fontSize: '0.9rem' }}>
               Xem danh sách đơn hàng
             </a>
           </div>
@@ -106,7 +106,7 @@ export const MockPayOSStandalonePage: React.FC = () => {
               <img
                 src={qrUrl}
                 alt="QR Code PayOS"
-                style={{ width: '100%', maxWidth: 220, borderRadius: 8, margin: '0 auto', display: 'block' }}
+                style={{ width: '100%', maxWidth: 220, borderRadius: 12, margin: '0 auto', display: 'block' }}
                 onError={(e) => {
                   (e.target as HTMLImageElement).src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="%23f3f4f6"/><text x="100" y="100" font-size="14" text-anchor="middle" fill="%23e02e24" font-weight="bold">VIETQR DEMO</text></svg>';
                 }}
@@ -144,7 +144,7 @@ export const MockPayOSStandalonePage: React.FC = () => {
               type="button"
               onClick={handleConfirmPayment}
               disabled={loading}
-              style={{ width: '100%', background: '#d81b60', color: '#fff', border: 'none', padding: '14px', borderRadius: 8, fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer' }}
+              style={{ width: '100%', background: '#d81b60', color: '#fff', border: 'none', padding: '14px', borderRadius: 12, fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer' }}
             >
               {loading ? 'Đang gửi xác nhận...' : '⚡ Xác nhận đã chuyển khoản thành công'}
             </button>

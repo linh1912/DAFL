@@ -106,21 +106,26 @@ public static class DbInitializer
             var superAdminCount = await context.Users.CountAsync(u => u.Role == "SuperAdmin");
             if (superAdminCount > 1)
                 logger.LogWarning("More than one SuperAdmin account exists ({Count}). Only one SuperAdmin is expected.", superAdminCount);
-            if (superAdminCount == 0 && await context.Users.AnyAsync())
-                logger.LogWarning("No SuperAdmin account found. Seed admin@dafl.vn or set Role='SuperAdmin' directly in DB.");
+            // (Không còn cảnh báo "No SuperAdmin" ở đây — khối 1c bên dưới sẽ tự tạo
+            // admin@dafl.vn nếu thiếu, kể cả trên DB đã có user từ trước.)
 
             // 1. Seed Demo Users
             if (!await context.Users.AnyAsync())
             {
                 logger.LogInformation("Seeding default demo users...");
-                var passwordHash = BCrypt.Net.BCrypt.HashPassword("Password123!");
+                // Tài khoản demo shop KHÔNG đổi: demo@dafl.vn / Password123!
+                var demoPasswordHash = BCrypt.Net.BCrypt.HashPassword("Password123!");
+                // Tài khoản quản trị mặc định: admin@dafl.vn / Admin@123
+                // (đăng nhập được bằng tên "admin" — frontend admin-only tự đổi
+                // "admin" thành "admin@dafl.vn" trước khi gọi API login).
+                var adminPasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin@123");
 
                 var demoUser = new User
                 {
                     Id = Guid.Parse("11111111-1111-1111-1111-111111111111"),
                     Email = "demo@dafl.vn",
                     FullName = "Nguyễn Văn Demo",
-                    PasswordHash = passwordHash,
+                    PasswordHash = demoPasswordHash,
                     PhoneNumber = "0987654321",
                     Address = "Số 1 Đại Cồ Việt, Hai Bà Trưng, Hà Nội",
                     Role = "Customer",
@@ -134,7 +139,7 @@ public static class DbInitializer
                     Id = Guid.Parse("22222222-2222-2222-2222-222222222222"),
                     Email = "admin@dafl.vn",
                     FullName = "Quản Trị Viên DAFL",
-                    PasswordHash = passwordHash,
+                    PasswordHash = adminPasswordHash,
                     PhoneNumber = "0912345678",
                     Address = "Tòa nhà Keangnam, Mễ Trì, Hà Nội",
                     Role = "SuperAdmin",
@@ -188,6 +193,32 @@ public static class DbInitializer
                 }
                 await context.SaveChangesAsync();
                 logger.LogInformation("Marked {Count} seed user(s) as email-verified.", unverifiedSeedUsers.Count);
+            }
+
+            // 1c. Đảm bảo Super Admin mặc định tồn tại (idempotent):
+            // seed ở khối 1 chỉ chạy khi bảng Users trống, mà DB máy Matthew đã có
+            // user nên admin@dafl.vn có thể chưa tồn tại. Khối này chỉ TẠO MỚI khi
+            // thiếu — KHÔNG đụng tới tài khoản đã có, KHÔNG reset mật khẩu của tài
+            // khoản đã tồn tại (kể cả khi ai đó đã đổi mật khẩu admin).
+            if (!await context.Users.AnyAsync(u => u.Email == "admin@dafl.vn"))
+            {
+                logger.LogInformation("SuperAdmin admin@dafl.vn not found — creating default admin account...");
+                var defaultAdmin = new User
+                {
+                    Id = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                    Email = "admin@dafl.vn",
+                    FullName = "Quản Trị Viên DAFL",
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin@123"),
+                    PhoneNumber = "0912345678",
+                    Address = "Tòa nhà Keangnam, Mễ Trì, Hà Nội",
+                    Role = "SuperAdmin",
+                    CreatedAt = DateTime.UtcNow,
+                    EmailVerified = true,
+                    EmailVerifiedAt = DateTime.UtcNow
+                };
+                await context.Users.AddAsync(defaultAdmin);
+                await context.SaveChangesAsync();
+                logger.LogInformation("Created default SuperAdmin admin@dafl.vn (login: admin / Admin@123).");
             }
 
             // 2. Seed Vouchers (Idempotent: ensure FORDEV and all vouchers exist)

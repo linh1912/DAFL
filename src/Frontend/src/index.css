@@ -1970,21 +1970,6 @@ body {
   border-bottom: 1px dashed rgba(216, 27, 96, 0.25);
 }
 
-.payos-iframe-container {
-  width: 100%;
-  height: 560px;
-  background: #ffffff;
-  position: relative;
-  overflow: hidden;
-}
-
-.payos-iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
-  display: block;
-}
-
 .payos-sync-footer {
   padding: 14px 20px;
   background: var(--bg-subtle);
@@ -4558,3 +4543,251 @@ textarea:focus-visible, [tabindex]:focus-visible {
   [data-testid="admin-page"] table { display: block; overflow-x: auto; }
   [data-testid="admin-page"] { padding: 1rem !important; }
 }
+
+/* ============================================================== */
+/* Đợt cuối — chuẩn hóa shop toàn web (chỉ giao diện, không đổi    */
+/* chức năng/testid): những chỗ còn lệch so với design system     */
+/* shop đã chốt (hồng #d81b60, nền trắng/xám nhạt, bo góc 16px,   */
+/* chữ gốc 16.5px, H1 2.2rem, giá 1.3rem, section 28px,           */
+/* :focus-visible) thì đưa về chuẩn. Riêng admin dùng palette    */
+/* Spark (#051C12 + #B4F105) trong AdminPage.css, không lẫn.      */
+/* (append-only: ghi đè các block cũ)                            */
+/* ============================================================== */
+
+/* Thẻ sản phẩm: bo góc 16px như card chuẩn (trước đây 10px). */
+.product-card { border-radius: 16px; }
+.product-discount-badge { border-radius: 8px; }
+.product-brand { font-size: 0.75rem; }
+
+/* Header: chữ dải ưu đãi + nhãn tiện ích quá nhỏ thì tăng lên. */
+.dafl-topbar { font-size: 0.8rem; }
+.header-utility { font-size: 0.75rem; }
+.brand-name small { font-size: 0.65rem; }
+
+/* Footer + dải newsletter: chữ thân tăng 1 nấc cho đồng đều. */
+.newsletter-copy h2 { font-size: 1.4rem; }
+.newsletter-copy p { font-size: 0.95rem; }
+.site-footer { font-size: 0.88rem; }
+.site-footer h3 { font-size: 0.95rem; }
+.footer-bottom { font-size: 0.82rem; }
+
+/* Giỏ hàng: nút tăng/giảm 32px cho dễ bấm (đặc biệt mobile), chip voucher + mô tả rõ hơn. */
+.qty-btn { width: 32px; height: 32px; }
+.voucher-section { border-radius: 16px; }
+.voucher-chip { font-size: 0.8rem; }
+.freeship-progress-label { font-size: 0.85rem; }
+.cart-item-shop { font-size: 0.8rem; }
+
+/* Đơn hàng: tab lọc + tổng tiền chi tiết rõ hơn; card bo 16px. */
+.order-filter-btn { font-size: 0.9rem; }
+.order-detail-card { border-radius: 16px; }
+.order-detail-totals { font-size: 0.95rem; }
+
+/* Chi tiết sản phẩm: badge tin cậy + khung mô tả theo chuẩn. */
+.product-trust-badge { font-size: 0.85rem; }
+.product-detail-desc { border-radius: 16px; }
+
+/* Toast: bo góc 16px như card chuẩn (trước đây 10px). */
+.toast-alert { border-radius: 16px; }
+
+/* Trang thanh toán PayOS: lưới QR 2 cột, mobile xếp 1 cột; nhãn trường 0.8rem. */
+.payos-qr-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: center;
+}
+.payos-field-label { font-size: 0.8rem; color: var(--text-muted, #6b7280); }
+@media (max-width: 640px) {
+  .payos-qr-grid { grid-template-columns: 1fr; }
+}
+
+/* ================================================================
+   BRIEF UI/UX CHINH THUC — chuan hoa shop toan web (append-only)
+   Tong vang #FFD900 + hong dam #D81B60, font Be Vietnam Pro,
+   spacing boi so 4/8, bo goc input/nut 12px, card 16px, modal 20px.
+   Khong doi logic/API/testid. Admin Spark (.spark-admin) khong anh huong.
+   ================================================================ */
+
+/* ---------- (1) Design tokens ---------- */
+:root, [data-theme="light"], [data-theme="dark"] {
+  --font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif;
+  --color-pink: #D81B60;
+  --color-pink-dark: #AD1457;
+  --color-yellow: #FFD900;
+  --color-ink: #111111;
+  --color-muted: #6B7280;
+  --color-line: #EEEEEE;
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, .06);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, .08);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, .06);
+  --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, .10);
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-6: 24px; --space-8: 32px; --space-12: 48px;
+}
+body { line-height: 1.5; }
+.page-title { font-size: 1.9rem; }
+
+/* ---------- (2) Container toi da 1280px, padding 16 mobile / 24 desktop ---------- */
+.app-container { max-width: 1280px; }
+@media (max-width: 640px) {
+  .app-container { padding: 0 16px 48px; }
+  .dafl-topbar, .header, .shop-layout, .hero, section[data-testid="category-filter-section"], .brand-banner-row, .site-chrome { width: calc(100% + 32px); margin-left: -16px; }
+}
+
+/* ---------- (3) Bo goc / bong / modal / toast ---------- */
+.modal-content { border-radius: 20px; }
+.modal-overlay { backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.product-card, .order-card, .profile-card, .payment-page-card, .notifications-page-card, .product-detail-page-card, .cart-page-content, .auth-page-card { border-radius: 16px; }
+.btn { border-radius: 12px; }
+.form-input, select.form-input, .sort-select, .orders-filter-select { border-radius: 12px; }
+.toast-container { top: 88px; }
+.toast-alert { border-radius: 12px; }
+
+/* ---------- (4) Thanh vang tren cung + Header ---------- */
+.dafl-topbar { min-height: 36px; padding: 6px 16px; font-size: 0.75rem; }
+.header { padding: 14px 24px; }
+.search-bar { max-width: 640px; }
+.header-actions { gap: 16px; }
+.header-utility, .btn-icon, .btn-cart { min-width: 44px; min-height: 44px; }
+.header-utility svg, .btn-icon svg, .btn-cart svg { width: 22px; height: 22px; }
+.btn-account-toggle { flex-direction: row; align-items: center; gap: 8px; padding: 4px 8px; min-height: 44px; }
+.account-avatar-mini { width: 36px; height: 36px; border-radius: 50%; background: #d81b60; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; font-weight: 800; flex-shrink: 0; }
+.account-toggle-name { max-width: none; font-size: 0.85rem; }
+
+/* ---------- (5) Trang chu: banner (anh 37a: mui ten khong de chu) ---------- */
+.hero-carousel { border-radius: 20px; }
+.hero-text-box { margin-left: 56px; max-width: 420px; padding: 32px; }
+.hero-dots { left: 50%; transform: translateX(-50%); }
+@media (max-width: 640px) {
+  .hero-text-box { margin-left: 40px; max-width: calc(100% - 64px); padding: 20px; }
+}
+
+/* ---------- (6) Dai cam ket / icon danh muc / thuong hieu ---------- */
+.trust-strip { background: var(--bg-subtle); border-radius: 12px; padding: 12px 16px; }
+.category-icon-emoji { font-size: 40px; }
+.category-icon-btn { border-radius: 16px; }
+.brand-strip { border-radius: 16px; }
+
+/* ---------- (7) Chip danh muc (anh 37b): fade 2 mep + an scrollbar + cuon muot ---------- */
+.categories-bar { scrollbar-width: none; -ms-overflow-style: none; scroll-behavior: smooth; scroll-snap-type: x proximity; -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 48px), transparent 100%); mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 48px), transparent 100%); }
+.categories-bar::-webkit-scrollbar { display: none; height: 0; width: 0; }
+.category-pill { scroll-snap-align: start; }
+
+/* ---------- (8) Sidebar loc + khoang gia (anh 33) ---------- */
+.shop-layout { grid-template-columns: 240px minmax(0, 1fr); }
+.filter-group { padding-bottom: 24px; }
+.filter-link { padding: 6px 10px; border-radius: 8px; }
+.filter-link.active { background: #ffe8f0; }
+.price-range-inputs { gap: 6px; }
+.price-range-inputs .form-input { padding: 10px 8px; font-size: 0.85rem; }
+.price-range-sep { flex-shrink: 0; }
+.price-apply-btn { width: 100%; height: 44px; margin-top: 10px; }
+
+/* ---------- (9) Luoi + the san pham ---------- */
+.products-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.product-image-wrap { height: auto; aspect-ratio: 1 / 1; background: #F7F7F7; }
+.product-discount-badge { border-radius: 8px; }
+.product-name { font-size: 1rem; font-weight: 600; }
+.product-shop-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 4px; }
+.product-shop-row .product-shop { margin-bottom: 0; }
+.product-shop-row .product-meta { margin-bottom: 0; }
+.product-price { color: var(--primary); font-size: 1.3rem; font-weight: 800; }
+.product-add-btn { height: 44px; }
+.product-add-btn:hover:not(:disabled) { background: #d81b60; border-color: #d81b60; color: #ffffff; }
+@media (max-width: 1100px) {
+  .products-grid, .best-seller-section .products-grid, .suggested-section .products-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .products-grid, .best-seller-section .products-grid, .suggested-section .products-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+}
+
+/* ---------- (10) Gio hang + giao hang (anh 35) ---------- */
+.cart-two-columns-layout { grid-template-columns: 1.5fr 1fr; }
+@media (max-width: 1024px) { .cart-two-columns-layout { grid-template-columns: 1fr; } }
+.cart-item-actions { gap: 0; }
+.cart-item-actions .qty-btn:first-child { border-radius: 999px 0 0 999px; border-right: none; }
+.cart-qty-input { border-radius: 0; border-left: none; border-right: none; height: 32px; }
+.cart-qty-input + .qty-btn { border-radius: 0 999px 999px 0; border-left: none; }
+.cart-item-remove-btn { margin-left: 10px; }
+.voucher-input-group .form-input, .voucher-input-group .btn { height: 44px; }
+.freeship-progress-track { height: 8px; }
+.form-input { height: 44px; }
+select.form-input { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px; min-width: 0; text-overflow: ellipsis; }
+.form-group { min-width: 0; }
+.cart-back-link { background: transparent; border-color: transparent; box-shadow: none; }
+.cart-back-link:hover { background: rgba(0, 0, 0, 0.04); }
+
+/* ---------- (11) PayOS ---------- */
+.payos-summary-bar { flex-wrap: wrap; gap: 10px; }
+.payos-embedded-header { flex-wrap: wrap; gap: 10px; }
+
+/* ---------- (12) Thanh toan thanh cong (anh 40) ---------- */
+@keyframes scaleIn { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.scale-in { animation: scaleIn 0.35s ease both; }
+.paid-view-actions, .success-actions { flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .paid-view-actions, .success-actions { flex-direction: column; }
+  .paid-view-actions .btn, .success-actions a { width: 100%; justify-content: center; }
+}
+
+/* ---------- (13) Don hang cua toi (anh 36) ---------- */
+.order-filter-tabs { scrollbar-width: none; -ms-overflow-style: none; scroll-behavior: smooth; -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 48px), transparent 100%); mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 48px), transparent 100%); }
+.order-filter-tabs::-webkit-scrollbar { display: none; height: 0; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---------- (14) Modal thong bao (anh 34) ---------- */
+.notif-modal { padding: 24px; }
+.notif-mark-all-btn { background: none; border: none; color: #d81b60; cursor: pointer; font-size: 0.8rem; font-weight: 700; padding: 6px 12px; border-radius: 999px; white-space: nowrap; }
+.notif-mark-all-btn:hover { background: rgba(216, 27, 96, 0.08); }
+.notification-item.notif-compact:hover { border-color: rgba(216, 27, 96, 0.3); }
+
+/* ---------- (15) Footer + dang ky email ---------- */
+.newsletter-band { border-radius: 20px; padding: 32px; }
+.newsletter-control input, .newsletter-control button { height: 52px; }
+.newsletter-control input { border-radius: 12px 0 0 12px; }
+.newsletter-control button { border-radius: 0 12px 12px 0; }
+.site-footer li { padding: 5px 0; }
+.site-footer li a, .site-footer li button { color: #6B7280; text-decoration: none; }
+.site-footer li a:hover, .site-footer li button:hover { color: #d81b60; }
+@media (max-width: 768px) {
+  .newsletter-control input, .newsletter-control button { border-radius: 12px; }
+}
+
+/* ---------- (16) Dark mode (brief): nen #0F0F10, card #18181B, vien #27272A, chu #F4F4F5 ---------- */
+[data-theme="dark"] {
+  --bg-primary: #0F0F10; --bg-secondary: #18181B; --bg-card: #18181B; --bg-card-hover: #1F1F23;
+  --bg-header: #18181B; --bg-modal: #18181B; --bg-input: #27272A; --bg-input-focus: #27272A;
+  --bg-subtle: #27272A; --bg-subtle-light: #27272A; --bg-img-wrap: #F7F7F7;
+  --border-subtle: #27272A; --border-focus: rgba(216, 27, 96, 0.6);
+  --text-main: #F4F4F5; --text-muted: #A1A1AA; --text-dim: #A1A1AA;
+  --btn-secondary-bg: #27272A; --btn-secondary-hover: #3F3F46;
+  --btn-cart-bg: #18181B; --btn-cart-border: #F4F4F5; --btn-cart-text: #F4F4F5;
+  --dafl-yellow: #FFD900; --dafl-yellow-dark: #E6C200; --dafl-sale: #D81B60; --dafl-sale-dark: #AD1457;
+  --dafl-sale-soft: rgba(216, 27, 96, 0.2); --dafl-ink: #F4F4F5; --dafl-ink-2: #D4D4D8;
+  --dafl-muted: #A1A1AA; --dafl-line: #27272A; --dafl-cream: #18181B; --dafl-image-bg: #F7F7F7;
+  --pill-bg: #27272A; --pill-hover: #3F3F46; --pill-border: #3F3F46; --pill-color: #F4F4F5;
+  --hero-bg: #18181B; --hero-border: #27272A; --hero-title-color: #F4F4F5; --hero-subtitle-color: #A1A1AA;
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, .5); --shadow-md: 0 4px 16px rgba(0, 0, 0, .5);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, .4); --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, .5);
+  --scrollbar-thumb: #3F3F46; --scrollbar-thumb-hover: #52525B;
+}
+[data-theme="dark"] body { background: #0F0F10; }
+[data-theme="dark"] .header { background: #18181B; }
+[data-theme="dark"] .modal-content, [data-theme="dark"] .auth-page-card, [data-theme="dark"] .cart-page-content, [data-theme="dark"] .product-detail-page-card, [data-theme="dark"] .profile-card, [data-theme="dark"] .order-card, [data-theme="dark"] .payment-page-card, [data-theme="dark"] .notifications-page-card { background: #18181B; }
+[data-theme="dark"] .shop-layout, [data-theme="dark"] section[data-testid="category-filter-section"], [data-theme="dark"] .hero, [data-theme="dark"] .site-chrome, [data-theme="dark"] .site-footer, [data-theme="dark"] .footer-bottom { background: #18181B; }
+[data-theme="dark"] .category-icon-btn, [data-theme="dark"] .brand-strip { background: #18181B; border-color: #27272A; }
+[data-theme="dark"] .category-pill { background: #27272A; color: #F4F4F5; }
+[data-theme="dark"] .filter-group h3 { color: #F4F4F5; }
+[data-theme="dark"] .filter-link, [data-theme="dark"] .filter-option { color: #D4D4D8; }
+[data-theme="dark"] .filter-link.active { background: rgba(216, 27, 96, 0.2); }
+[data-theme="dark"] .product-name { color: #F4F4F5; }
+[data-theme="dark"] .product-brand, [data-theme="dark"] .product-original-price, [data-theme="dark"] .product-stock { color: #A1A1AA; }
+[data-theme="dark"] .site-footer { color: #D4D4D8; }
+[data-theme="dark"] .site-footer h3 { color: #F4F4F5; }
+[data-theme="dark"] .footer-bottom { color: #A1A1AA; }
+[data-theme="dark"] .header-utility, [data-theme="dark"] .btn-cart, [data-theme="dark"] .btn-icon { color: #F4F4F5; }
+[data-theme="dark"] .btn-account-toggle.active { background: #27272A; }

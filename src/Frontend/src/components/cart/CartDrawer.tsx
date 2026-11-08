@@ -121,8 +121,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           {!isModal && (
             <button
               type="button"
-              className="btn btn-secondary"
-              style={{ padding: '6px 14px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}
+              className="btn btn-secondary cart-back-link"
+              style={{ padding: '6px 10px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 4 }}
               onClick={() => {
                 onClose();
                 onNavigateToHome?.();
@@ -130,7 +130,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               data-testid="cart-close-btn"
               title="Quay lại trang chủ"
             >
-              <ArrowLeft size={16} /> Tiếp tục mua sắm
+              <ArrowLeft size={16} /> Quay lại
             </button>
           )}
           <h2 className={isModal ? 'modal-title' : 'page-title'} style={{ margin: 0 }} data-testid="cart-drawer-title">
@@ -153,8 +153,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       {!checkoutResult ? (
         <>
           {cart.length === 0 ? (
-            <div className="cart-empty-box" style={{ textAlign: 'center', padding: '60px 0', color: '#9ca3af' }} data-testid="cart-empty-state">
-              <ShoppingBag size={56} style={{ margin: '0 auto 16px', opacity: 0.3 }} />
+            <div className="cart-empty-box" style={{ textAlign: 'center', padding: '48px 20px', color: '#9ca3af', minHeight: 360, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }} data-testid="cart-empty-state">
+              <div style={{ width: 104, height: 104, borderRadius: '50%', background: 'var(--bg-subtle, #f3f4f6)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+                <ShoppingBag size={72} style={{ opacity: 0.35 }} />
+              </div>
               <h3 style={{ fontSize: '1.2rem', marginBottom: 8, color: 'var(--text-main)' }}>Giỏ hàng trống</h3>
               <p style={{ marginBottom: 20 }}>Khám phá deal mỹ phẩm ngay.</p>
               <button
@@ -210,7 +212,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     background: 'var(--bg-subtle)',
                     border: '1px solid var(--border-subtle)',
                     padding: 18,
-                    borderRadius: 12,
+                    borderRadius: 16,
                     marginBottom: 20
                   }}
                   data-testid="cart-pricing-summary"
@@ -339,8 +341,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       ) : isCodSuccess ? (
         /* View 2a: Đặt hàng COD thành công (CN-07.5) */
         <div style={{ textAlign: 'center', padding: '30px 10px' }} data-testid="order-success-view">
-          <CheckCircle2 size={56} color="#10b981" style={{ margin: '0 auto 16px' }} />
-          <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#16a34a', marginBottom: 8 }}>
+          <div className="success-tick-wrap scale-in" style={{ width: 104, height: 104, borderRadius: '50%', background: 'rgba(16,185,129,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+            <CheckCircle2 size={72} color="#10b981" />
+          </div>
+          <h3 style={{ fontSize: '1.7rem', fontWeight: 800, color: '#16a34a', marginBottom: 8, lineHeight: 1.3, padding: '0 16px' }}>
             Đặt hàng thành công!
           </h3>
           <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>
@@ -384,11 +388,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         /* View 2: Embedded PayOS Payment View directly on the web page */
         <div data-testid="checkout-payment-view">
           <div style={{ textAlign: 'center', marginBottom: 16 }}>
-            <h3 style={{ fontSize: '1.25rem', marginBottom: 4, fontWeight: 800 }} data-testid="checkout-order-code">
+            <h3 style={{ fontSize: '1.35rem', lineHeight: 1.35, padding: '0 16px', marginBottom: 4, fontWeight: 800, overflowWrap: 'break-word' }} data-testid="checkout-order-code">
               Đơn hàng #{checkoutResult.orderCode}
             </h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-              Thanh toán an toàn được xử lý trực tiếp tại trang web — Không mở tab trắng
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', padding: '0 16px' }}>
+              Quét mã VietQR tại chỗ hoặc mở PayOS ở tab mới — an toàn, không cần đăng nhập
             </p>
           </div>
 
@@ -403,7 +407,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--text-main)' }}>
                       Cổng thanh toán PayOS (Thực hiện trực tiếp)
                     </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                       Quét mã QR VietQR hoặc chuyển khoản trực tiếp qua ngân hàng
                     </div>
                   </div>
@@ -424,7 +428,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    style={{ padding: '6px 12px', fontSize: '0.75rem' }}
+                    style={{ padding: '8px 14px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
                     onClick={() => onCopyOrderCode && onCopyOrderCode(checkoutResult.orderCode)}
                     data-testid="copy-order-code-btn"
                   >
@@ -434,7 +438,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     <button
                       type="button"
                       className="btn btn-secondary"
-                      style={{ padding: '6px 12px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                      style={{ padding: '8px 14px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
                       onClick={onResetCheckout}
                       data-testid="back-to-cart-btn"
                       title="Quay lại giỏ hàng để chọn hoặc thay đổi sản phẩm"
@@ -445,7 +449,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
               </div>
 
-              {/* PayOS Gateway View (Real iframe or clean VietQR mock) */}
+              {/* PayOS Gateway View (VietQR tại chỗ) */}
               <PayOSGatewayView
                 orderCode={checkoutResult.orderCode}
                 totalAmount={checkoutResult.totalAmount}
@@ -463,14 +467,20 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
           {orderStatus === 'Paid' && (
             <div style={{ textAlign: 'center', padding: '30px 10px' }} data-testid="order-paid-view">
-              <CheckCircle2 size={56} color="#10b981" style={{ margin: '0 auto 16px' }} />
-              <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#10b981', marginBottom: 8 }}>
+              <div className="success-tick-wrap scale-in" style={{ width: 104, height: 104, borderRadius: '50%', background: 'rgba(16,185,129,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                <CheckCircle2 size={72} color="#10b981" />
+              </div>
+              <h3 style={{ fontSize: '1.7rem', fontWeight: 800, color: '#10b981', marginBottom: 8, lineHeight: 1.3, padding: '0 16px' }}>
                 Thanh toán thành công!
               </h3>
-              <p style={{ color: 'var(--text-muted)', marginBottom: 20 }}>
+              <p style={{ color: 'var(--text-muted)', marginBottom: 16, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
                 Đơn hàng #{checkoutResult.orderCode} đã được thanh toán. Hệ thống đang tiến hành đóng gói và giao hàng.
               </p>
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <div style={{ display: 'inline-flex', gap: 24, background: 'var(--bg-subtle, #f9fafb)', border: '1px solid var(--border-subtle, #e5e7eb)', borderRadius: 12, padding: '12px 20px', marginBottom: 20, fontSize: '0.9rem' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Mã đơn: <strong style={{ color: 'var(--text-main)' }}>#{checkoutResult.orderCode}</strong></span>
+                <span style={{ color: 'var(--text-muted)' }}>Số tiền: <strong style={{ color: '#d81b60' }}>{formatPrice(checkoutResult.totalAmount)}</strong></span>
+              </div>
+              <div className="paid-view-actions" style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
                 <button
                   type="button"
                   className="btn btn-secondary"
