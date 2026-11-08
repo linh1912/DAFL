@@ -381,12 +381,12 @@
   text-overflow: ellipsis;
 }
 
-/* ---------- Nội dung ---------- */
+/* ---------- Nội dung: tràn full màn hình (không giới hạn 1240px) ---------- */
 .spark-admin .sa-content {
-  padding: 22px 24px 40px;
+  padding: 22px 28px 40px;
   width: 100%;
-  max-width: 1240px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
 }
 
 .spark-admin .sa-pagehead {
