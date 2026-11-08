@@ -1,19 +1,20 @@
 import React from 'react';
 import {
   ShoppingBag, Search, Bell, LogOut, User as UserIcon,
-  Sun, Moon, ChevronDown, X, Package, Store, Newspaper
+  Sun, Moon, ChevronDown, X, Package, Store, Newspaper, ShieldCheck
 } from 'lucide-react';
 import { User } from '../../types';
 
 export interface HeaderProps {
   searchQuery: string;
   setSearchQuery: (val: string) => void;
-  onNavigate: (route: 'home' | 'cart' | 'login' | 'register' | 'orders' | 'profile' | 'notifications') => void;
+  onNavigate: (route: 'home' | 'cart' | 'login' | 'register' | 'orders' | 'profile' | 'notifications' | 'admin') => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   unreadCount: number;
   onToggleNotif: () => void;
   user: User | null;
+  isAdmin?: boolean;
   profileFullName: string;
   isAccountDropdownOpen: boolean;
   setIsAccountDropdownOpen: (open: boolean) => void;
@@ -41,6 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAuth,
   totalItemCount,
   onOpenCart,
+  isAdmin,
 }) => {
   return (
     <>
@@ -98,6 +100,12 @@ export const Header: React.FC<HeaderProps> = ({
             <Newspaper size={20} />
             <span>Tạp chí</span>
           </button>
+          {isAdmin && (
+            <button type="button" className="header-utility" onClick={() => onNavigate('admin')} data-testid="admin-nav-link">
+              <ShieldCheck size={20} />
+              <span>Quản trị</span>
+            </button>
+          )}
         </nav>
 
         {/* Theme Switch Toggle Button */}
@@ -151,7 +159,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {user ? user.fullName : 'Khách hàng'}
                 </div>
                 <div className="dropdown-user-role">
-                  {user ? (user.role === 'Admin' ? 'Quản trị viên' : 'Thành viên DAFL') : 'Chưa đăng nhập'}
+                  {user ? (user.role === 'Admin' || user.role === 'SuperAdmin' ? 'Quản trị viên' : 'Thành viên DAFL') : 'Chưa đăng nhập'}
                 </div>
               </div>
 
@@ -191,6 +199,21 @@ export const Header: React.FC<HeaderProps> = ({
                   <UserIcon size={16} className="dropdown-item-icon" />
                   <span className="dropdown-item-label">Thông tin & Sổ địa chỉ</span>
                 </button>
+
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="dropdown-nav-item"
+                    onClick={() => {
+                      setIsAccountDropdownOpen(false);
+                      onNavigate('admin');
+                    }}
+                    data-testid="dropdown-admin-btn"
+                  >
+                    <ShieldCheck size={16} className="dropdown-item-icon" />
+                    <span className="dropdown-item-label">Trang quản trị</span>
+                  </button>
+                )}
               </div>
 
               <div className="dropdown-divider" />

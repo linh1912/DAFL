@@ -794,7 +794,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
 
       <button
         type="submit"
-        className="btn btn-primary"
+        className="btn btn-primary checkout-submit-btn"
         style={{ width: '100%', padding: '14px', marginTop: 10 }}
         disabled={isCheckingOut}
         data-testid="cart-checkout-btn"

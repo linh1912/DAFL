@@ -1,19 +1,37 @@
 import React, { useState } from 'react';
 import { CheckCircle2, CreditCard, Mail, MapPin, Phone } from 'lucide-react';
+import { apiJson } from '../../utils/api';
 
 export const SiteFooter: React.FC = () => {
   const [newsletterEmail, setNewsletterEmail] = useState('');
   const [newsletterDone, setNewsletterDone] = useState(false);
   const [newsletterError, setNewsletterError] = useState('');
+  const [newsletterBusy, setNewsletterBusy] = useState(false);
 
-  const handleNewsletterSubmit = (e: React.FormEvent) => {
+  const handleNewsletterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newsletterEmail.trim())) {
       setNewsletterError('Vui lòng nhập email đúng định dạng.');
       return;
     }
     setNewsletterError('');
-    setNewsletterDone(true);
+    setNewsletterBusy(true);
+    try {
+      // Đăng ký thật qua BE: POST /api/newsletter/subscribe (lưu vào DB).
+      const { status, body } = await apiJson<string>('/api/newsletter/subscribe', {
+        method: 'POST',
+        body: JSON.stringify({ email: newsletterEmail.trim() }),
+      });
+      if (status >= 200 && status < 300 && body?.success) {
+        setNewsletterDone(true);
+      } else {
+        setNewsletterError(body?.message ?? 'Đăng ký thất bại. Vui lòng thử lại sau.');
+      }
+    } catch {
+      setNewsletterError('Không kết nối được máy chủ. Vui lòng thử lại sau.');
+    } finally {
+      setNewsletterBusy(false);
+    }
   };
 
   return (
@@ -41,7 +59,7 @@ export const SiteFooter: React.FC = () => {
                 onChange={e => setNewsletterEmail(e.target.value)}
                 placeholder="Nhập email của bạn"
               />
-              <button type="submit">Đăng ký</button>
+              <button type="submit" disabled={newsletterBusy}>{newsletterBusy ? 'Đang đăng ký...' : 'Đăng ký'}</button>
             </div>
             {newsletterError && <span className="newsletter-error">{newsletterError}</span>}
           </form>

@@ -466,6 +466,15 @@ public class PasswordResetCode
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
+/// <summary>Email đăng ký nhận bản tin (footer). Bảng được tạo trên DB cũ qua
+/// ExtendedSchemaSync (CREATE TABLE IF NOT EXISTS) như các bảng mở rộng khác.</summary>
+public class NewsletterSubscription
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Email { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 // ==========================================
 // 3. EF Core DbContext Definition
 // ==========================================
@@ -502,6 +511,7 @@ public class AppDbContext : DbContext
     public DbSet<ReturnRequest> ReturnRequests => Set<ReturnRequest>();
     public DbSet<RefundRecord> RefundRecords => Set<RefundRecord>();
     public DbSet<PasswordResetCode> PasswordResetCodes => Set<PasswordResetCode>();
+    public DbSet<NewsletterSubscription> NewsletterSubscriptions => Set<NewsletterSubscription>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -2324,7 +2324,7 @@ body {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
 }
 /* ============================================================== */
-/* GlowMart shop reskin — layout format inspired by a clean beauty
+/* DAFL shop reskin — layout format inspired by a clean beauty
    collection page. Solid colours, restrained radii, no glow. */
 /* ============================================================== */
 :root,
@@ -3081,7 +3081,7 @@ section[data-testid="category-filter-section"] {
   background: #f5f5f5;
 }
 
-/* GlowMart category banners after the catalogue */
+/* DAFL category banners after the catalogue */
 .brand-banner-row {
   width: calc(100% + 48px);
   margin-left: -24px;
@@ -3907,7 +3907,7 @@ section[data-testid="category-filter-section"] {
 }
 
 /* ============================================================== */
-/* GlowMart UI refresh — typography chuẩn + hiệu ứng chuyển động    */
+/* DAFL UI refresh — typography chuẩn + hiệu ứng chuyển động    */
 /* (append-only: không sửa các block cũ để tránh phá style hiện có) */
 /* ============================================================== */
 
@@ -4291,7 +4291,7 @@ section[data-testid="category-filter-section"] {
   overflow: hidden;
 }
 
-/* --- Brand GlowMart: logo chữ dài hơn --- */
+/* --- Brand DAFL: logo chữ dài hơn --- */
 .brand-name { font-size: 1.5rem; letter-spacing: 0.04em; }
 .brand-name small { letter-spacing: 0.18em; }
 
@@ -4339,9 +4339,31 @@ body { font-size: 1rem; line-height: 1.55; }
 .search-bar { max-width: 680px; padding: 10px 10px 10px 20px; }
 .search-input { font-size: 1.05rem; }
 
-/* --- Hero banner lớn kiểu Cocolux: ảnh nền + nút prev/next --- */
-.hero-carousel { min-height: 280px; }
-.hero-slide { padding: 44px 64px 64px; }
+/* --- Hero banner lớn kiểu Cocolux: ảnh nền + nút prev/next ---
+ *  Full-bleed: banner tràn full chiều rộng màn hình (body đã overflow-x: hidden),
+ *  chữ canh theo container 1360px; cao 420px desktop, 260px mobile. */
+.hero-carousel { min-height: 420px; margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw); border-radius: 0; }
+.hero-slide {
+  padding: 48px max(42px, calc((100vw - 1360px) / 2 + 24px)) 72px;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+}
+.hero-carousel .hero-title { font-size: 2.6rem; line-height: 1.15; text-shadow: 0 2px 14px rgba(0, 0, 0, 0.35); }
+.hero-carousel .hero-subtitle { font-size: 1.15rem; }
+.hero-dots { left: max(42px, calc((100vw - 1360px) / 2 + 24px)); bottom: 20px; }
+@media (max-width: 640px) {
+  .hero-carousel, .hero-slide { min-height: 260px; }
+  .hero-slide { padding: 28px 20px 56px; }
+  .hero-carousel .hero-title { font-size: 1.7rem; }
+  .hero-carousel .hero-subtitle { font-size: 0.95rem; }
+  .hero-dots { left: 20px; }
+  .hero-nav-btn { width: 36px; height: 36px; font-size: 1.3rem; }
+  .hero-prev-btn { left: 10px; }
+  .hero-next-btn { right: 10px; }
+}
 .hero-slide-img {
   position: absolute;
   inset: 0;
@@ -4466,5 +4488,15 @@ body { font-size: 1rem; line-height: 1.55; }
   .brand-mark { width: 40px; height: 40px; font-size: 1.35rem; }
   .best-seller-section .products-grid, .suggested-section .products-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* --- Đợt 3: nút Đặt hàng dính đáy màn hình trên mobile để luôn bấm được --- */
+@media (max-width: 640px) {
+  .checkout-submit-btn {
+    position: sticky;
+    bottom: 12px;
+    z-index: 20;
+    box-shadow: 0 6px 20px rgba(216, 27, 96, 0.45);
   }
 }

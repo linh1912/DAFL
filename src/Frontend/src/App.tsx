@@ -44,6 +44,7 @@ import {
 } from 'react-router-dom';
 import { MockPayOSStandalonePage } from './components/checkout/MockPayOSStandalonePage';
 import { PaymentSuccessPage } from './components/checkout/PaymentSuccessPage';
+import AdminPage from './components/admin/AdminPage';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -55,28 +56,30 @@ const CATALOG_PAGE_SIZE = 12;
 /** Số đơn mỗi trang ở trang Đơn hàng. */
 const ORDERS_PAGE_SIZE = 10;
 
-/** Slide hero trang chủ DAFL — ít chữ, tự chạy 4s/slide, ảnh mỹ phẩm Unsplash. */
+/** Slide hero trang chủ DAFL — ít chữ, tự chạy 4s/slide, ảnh mỹ phẩm Unsplash.
+ *  Ảnh full-bleed: son môi flat-lay, skincare, trang điểm (đã kiểm chứng HTTP 200). */
+const HERO_FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=2000&q=80';
 const HERO_SLIDES = [
   {
     badge: 'FLASH SALE • GIẢM ĐẾN 50%',
     title: 'DAFL — Mỹ phẩm chính hãng',
     sub: 'Son, serum, kem chống nắng chính hãng từ nhiều shop.',
     cta: 'Mua ngay',
-    image: 'https://images.unsplash.com/photo-1586495777744-4413f21062fa?auto=format&fit=crop&w=1600&q=80',
+    image: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&w=2000&q=80',
   },
   {
     badge: 'FREESHIP ĐƠN TỪ 299K',
     title: 'Mua mỹ phẩm, freeship tận nhà',
     sub: 'Giao nhanh 2–4 ngày, đổi trả trong 30 ngày.',
     cta: 'Xem deal freeship',
-    image: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=1600&q=80',
+    image: 'https://images.unsplash.com/photo-1571781926291-c477ebfd024b?auto=format&fit=crop&w=2000&q=80',
   },
   {
     badge: 'HỘI VIÊN DAFL',
     title: 'Tích điểm mỗi đơn, lên hạng nhận ưu đãi',
     sub: 'Thường • Bạc • Vàng • Kim cương.',
     cta: 'Khám phá hội viên',
-    image: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=1600&q=80',
+    image: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=2000&q=80',
   },
 ];
 
@@ -412,6 +415,43 @@ export default function App() {
   // Thông báo phụ thuộc người dùng: tải lại khi đăng nhập/đăng xuất
   useEffect(() => {
     fetchNotifications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Quyền admin cho Header: 1 lần gọi GET /api/admin/profile khi đã đăng nhập,
+  // cache trong phiên (403 → ẩn link, không spam API mỗi lần render).
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    if (!user) {
+      setIsAdmin(false);
+      try {
+        sessionStorage.removeItem('dafl_admin_checked');
+        sessionStorage.removeItem('dafl_is_admin');
+      } catch { /* bỏ qua */ }
+      return;
+    }
+    try {
+      if (sessionStorage.getItem('dafl_admin_checked') === '1') {
+        setIsAdmin(sessionStorage.getItem('dafl_is_admin') === '1');
+        return;
+      }
+    } catch { /* bỏ qua */ }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { body } = await apiJson<{ role?: string }>('/api/admin/profile', { skipAuthHandler: true });
+        const ok = !!body?.success && body.data != null && (body.data.role === 'SuperAdmin' || body.data.role === 'Admin');
+        if (cancelled) return;
+        setIsAdmin(ok);
+        try {
+          sessionStorage.setItem('dafl_admin_checked', '1');
+          sessionStorage.setItem('dafl_is_admin', ok ? '1' : '0');
+        } catch { /* bỏ qua */ }
+      } catch {
+        /* offline: ẩn link admin */
+      }
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -1900,6 +1940,7 @@ export default function App() {
           onOpenAuth={() => navigateTo('login')}
           totalItemCount={totalItemCount}
           onOpenCart={() => navigateTo('cart')}
+          isAdmin={isAdmin}
         />
       )}
 
@@ -1918,7 +1959,17 @@ export default function App() {
                     data-testid={`hero-slide-${i}`}
                     aria-hidden={i !== heroSlide}
                   >
-                    <img className="hero-slide-img" src={slide.image} alt="" aria-hidden="true" loading={i === 0 ? 'eager' : 'lazy'} />
+                    <img
+                      className="hero-slide-img"
+                      src={slide.image}
+                      alt=""
+                      aria-hidden="true"
+                      loading={i === 0 ? 'eager' : 'lazy'}
+                      onError={e => {
+                        const img = e.currentTarget;
+                        if (img.src !== HERO_FALLBACK_IMAGE) img.src = HERO_FALLBACK_IMAGE;
+                      }}
+                    />
                     <div className="hero-top-badge">
                       <Sparkles size={14} color="#ad1457" />
                       <span>{slide.badge}</span>
@@ -2291,7 +2342,8 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Bộ lọc theo trạng thái — tab theo máy trạng thái §4/§8 của tài liệu nghiệp vụ */}
+                {/* Bộ lọc theo trạng thái — tab theo máy trạng thái §4/§8 của tài liệu nghiệp vụ.
+                    Số lượng mỗi tab tính từ lịch sử đơn đã tải (/api/orders/history). */}
                 <div className="order-filter-tabs" data-testid="order-status-filter" role="tablist" aria-label="Lọc đơn theo trạng thái">
                   {[
                     { value: '', label: 'Tất cả' },
@@ -2303,7 +2355,11 @@ export default function App() {
                     { value: 'Hoàn tất', label: 'Hoàn tất' },
                     { value: 'Trả hàng', label: 'Trả hàng' },
                     { value: 'Đã hủy', label: 'Đã hủy' },
-                  ].map(tab => (
+                  ].map(tab => {
+                    const tabCount = tab.value === ''
+                      ? orderHistory.length
+                      : orderHistory.filter(o => o.statusLabel === tab.value).length;
+                    return (
                     <button
                       key={tab.value || 'all'}
                       type="button"
@@ -2314,11 +2370,10 @@ export default function App() {
                       onClick={() => setOrderStatusFilter(tab.value)}
                     >
                       {tab.label}
-                      {tab.value !== '' && ordersList.length > 0 && orderStatusFilter === tab.value
-                        ? ` (${ordersList.length})`
-                        : ''}
+                      {tabCount > 0 ? ` (${tabCount})` : ''}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {cancelSuccessCode && (
@@ -3493,6 +3548,9 @@ export default function App() {
           }
         />
 
+        {/* Trang quản trị (Super Admin) — bảo vệ quyền ở trong AdminPage */}
+        <Route path="/admin" element={<AdminPage />} />
+
         {/* Standalone simulated payment and success pages */}
         <Route path="/mock-payos" element={<MockPayOSStandalonePage />} />
         <Route path="/payment-success" element={<PaymentSuccessPage />} />
@@ -3528,7 +3586,7 @@ export default function App() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <button
                 type="button"
-                style={{ background: 'none', border: 'none', color: '#ff8a80', cursor: 'pointer', fontSize: '0.8rem' }}
+                style={{ background: 'none', border: 'none', color: '#d81b60', cursor: 'pointer', fontSize: '0.8rem' }}
                 onClick={markAllNotificationsAsRead}
                 data-testid="mark-all-read-btn"
               >

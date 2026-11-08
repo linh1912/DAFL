@@ -905,6 +905,24 @@ app.MapPost("/api/auth/reset-password", async (ResetPasswordRequest request, IMe
 .WithDescription("Mã đúng + còn hạn + mật khẩu mới đạt policy và khác mật khẩu cũ → đổi mật khẩu, hủy mã đã dùng, vô hiệu mọi JWT đang sống (TokenVersion tăng).")
 .WithTags("Auth - Xác thực");
 
+// Đăng ký nhận bản tin (footer) — endpoint công khai, lưu thật vào bảng
+// NewsletterSubscriptions (bảng được tạo trên DB cũ qua ExtendedSchemaSync).
+app.MapPost("/api/newsletter/subscribe", async (NewsletterSubscribeRequest request, AppDbContext dbContext) =>
+{
+    var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+    if (email.Length is < 5 or > 254 || !System.Text.RegularExpressions.Regex.IsMatch(email, @"^[^\s@]+@[^\s@]+\.[^\s@]+$"))
+        return Results.BadRequest(ApiResponse<string>.Fail("Vui lòng nhập email đúng định dạng."));
+    var exists = await dbContext.NewsletterSubscriptions.AnyAsync(s => s.Email == email);
+    if (exists)
+        return Results.Ok(ApiResponse<string>.Ok(email, "Email này đã đăng ký nhận bản tin DAFL rồi."));
+    dbContext.NewsletterSubscriptions.Add(new NewsletterSubscription { Email = email });
+    await dbContext.SaveChangesAsync();
+    return Results.Ok(ApiResponse<string>.Ok(email, "Cảm ơn bạn đã đăng ký nhận bản tin DAFL."));
+})
+.WithName("NewsletterSubscribe")
+.WithSummary("Đăng ký nhận bản tin: lưu email thật vào DB, trùng email báo đã đăng ký")
+.WithTags("Marketing");
+
 // ==========================================
 // MODULE 10: MEMBERSHIP — Hội viên (§5, §6, §7.6)
 // ==========================================
@@ -1599,6 +1617,8 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
+public record NewsletterSubscribeRequest(string? Email);
 
 public record UpdateProfileRequest(string? FullName, string? PhoneNumber, string? Address);
 

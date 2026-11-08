@@ -17,7 +17,8 @@ public static class ExtendedSchemaSync
     private static readonly Type[] NewTables =
     {
         typeof(PointTransaction), typeof(PromotionUsage), typeof(MembershipTierConfig),
-        typeof(AuditLog), typeof(ReturnRequest), typeof(RefundRecord), typeof(PasswordResetCode)
+        typeof(AuditLog), typeof(ReturnRequest), typeof(RefundRecord), typeof(PasswordResetCode),
+        typeof(NewsletterSubscription)
     };
 
     private static readonly (Type Entity, string Property)[] NewColumns =
