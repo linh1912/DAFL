@@ -4339,27 +4339,28 @@ body { font-size: 1rem; line-height: 1.55; }
 .search-bar { max-width: 680px; padding: 10px 10px 10px 20px; }
 .search-input { font-size: 1.05rem; }
 
-/* --- Hero banner lớn kiểu Cocolux: ảnh nền + nút prev/next ---
- *  Full-bleed: banner tràn full chiều rộng màn hình (body đã overflow-x: hidden),
- *  chữ canh theo container 1360px; cao 420px desktop, 260px mobile. */
-.hero-carousel { min-height: 420px; margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw); border-radius: 0; }
+/* --- Hero banner kiểu Cocolux: ảnh nền + nút prev/next ---
+ *  Đợt 4: banner NẰM TRONG container (không tràn full màn hình nữa),
+ *  ảnh HIỆN TRỌN bằng object-fit: contain (không cắt chủ thể),
+ *  chữ đặt trong hộp nền tối mờ nên luôn đọc được. Cao 340px desktop, 240px mobile. */
+.hero-carousel { min-height: 340px; margin-left: 0; margin-right: 0; border-radius: 16px; }
 .hero-slide {
-  padding: 48px max(42px, calc((100vw - 1360px) / 2 + 24px)) 72px;
-  min-height: 420px;
+  padding: 28px 32px 56px;
+  min-height: 340px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: flex-start;
 }
-.hero-carousel .hero-title { font-size: 2.6rem; line-height: 1.15; text-shadow: 0 2px 14px rgba(0, 0, 0, 0.35); }
-.hero-carousel .hero-subtitle { font-size: 1.15rem; }
-.hero-dots { left: max(42px, calc((100vw - 1360px) / 2 + 24px)); bottom: 20px; }
+.hero-carousel .hero-title { font-size: 2.2rem; line-height: 1.2; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+.hero-carousel .hero-subtitle { font-size: 1.05rem; }
+.hero-dots { left: 32px; bottom: 18px; }
 @media (max-width: 640px) {
-  .hero-carousel, .hero-slide { min-height: 260px; }
-  .hero-slide { padding: 28px 20px 56px; }
-  .hero-carousel .hero-title { font-size: 1.7rem; }
+  .hero-carousel, .hero-slide { min-height: 240px; }
+  .hero-slide { padding: 20px 16px 48px; }
+  .hero-carousel .hero-title { font-size: 1.5rem; }
   .hero-carousel .hero-subtitle { font-size: 0.95rem; }
-  .hero-dots { left: 20px; }
+  .hero-dots { left: 16px; }
   .hero-nav-btn { width: 36px; height: 36px; font-size: 1.3rem; }
   .hero-prev-btn { left: 10px; }
   .hero-next-btn { right: 10px; }
@@ -4369,17 +4370,21 @@ body { font-size: 1rem; line-height: 1.55; }
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
   z-index: 0;
 }
-.hero-slide::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, rgba(216, 27, 96, 0.82) 0%, rgba(216, 27, 96, 0.45) 55%, rgba(0, 0, 0, 0.15) 100%);
-  z-index: 0;
+/* Hộp chữ nền tối mờ — chữ luôn đọc được dù ảnh sáng hay tối. */
+.hero-text-box {
+  position: relative;
+  z-index: 2;
+  background: rgba(24, 4, 14, 0.55);
+  border-radius: 14px;
+  padding: 20px 24px;
+  max-width: 560px;
 }
-.hero-slide > *:not(.hero-slide-img):not(:after) { position: relative; z-index: 1; }
+.hero-text-box .hero-top-badge { background: rgba(255, 255, 255, 0.25); }
+.hero-text-box .hero-subtitle { margin-bottom: 16px; }
 .hero-nav-btn {
   position: absolute;
   top: 50%;
@@ -4499,4 +4504,53 @@ body { font-size: 1rem; line-height: 1.55; }
     z-index: 20;
     box-shadow: 0 6px 20px rgba(216, 27, 96, 0.45);
   }
+}
+
+/* ============================================================== */
+/* Đợt 4 — chuẩn hóa design system toàn web (đồ án tốt nghiệp):    */
+/*  1 hệ màu (hồng #d81b60 chính; vàng chỉ dải ưu đãi + panel auth), */
+/*  1 thang chữ (H1 2.2rem, H2 1.6rem, tên SP 1.05rem, giá 1.3rem,  */
+/*  chữ thường 1rem), 1 kiểu nút/input/card/bảng, focus rõ,        */
+/*  khoảng cách section đều, bảng admin cuộn ngang trên mobile.     */
+/* (append-only: ghi đè các block cũ, không sửa testid)            */
+/* ============================================================== */
+
+/* 1. Token bo góc: lg phải lớn hơn md (trước đây lg=10px < md=14px). */
+:root { --radius-lg: 16px; }
+
+/* 2. Thang chữ chuẩn toàn web. */
+h1 { font-size: 2.2rem; }
+h2 { font-size: 1.6rem; }
+
+/* 3. Nút / input / dropdown / modal / card / bảng: bo góc + padding thống nhất. */
+.btn { border-radius: var(--radius-md); }
+.form-input, select.form-input, .sort-select, .orders-filter-select { border-radius: var(--radius-md); }
+.modal-content, .auth-page-card, .cart-page-content, .product-detail-page-card,
+.profile-card, .order-card, .payment-page-card, .notifications-page-card { border-radius: var(--radius-md); }
+
+/* 4. Focus rõ cho bàn phím: nút, link, input, select, textarea. */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, [tabindex]:focus-visible {
+  outline: 3px solid rgba(216, 27, 96, 0.45);
+  outline-offset: 2px;
+}
+
+/* 5. Khoảng cách các section trang chủ đều nhau (28px). */
+.shop-strip { margin: 8px 0 28px; }
+.best-seller-section, .suggested-section { margin: 8px 0 28px; }
+
+/* 5b. Flash Sale: nền hồng nhạt, cùng khoảng cách section 28px. */
+.flash-sale-section {
+  background: linear-gradient(180deg, #ffe8f0 0%, #fff 100%);
+  border: 1px solid #f3c1d3;
+  border-radius: 16px;
+  padding: 20px;
+  margin: 8px 0 28px;
+}
+.flash-sale-section .products-grid { margin-top: 12px; }
+
+/* 6. Bảng admin cuộn ngang trên mobile thay vì vỡ layout. */
+@media (max-width: 768px) {
+  [data-testid="admin-page"] table { display: block; overflow-x: auto; }
+  [data-testid="admin-page"] { padding: 1rem !important; }
 }

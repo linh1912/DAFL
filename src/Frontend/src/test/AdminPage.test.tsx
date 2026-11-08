@@ -10,6 +10,22 @@ function mockFetchFor(profile: { status: number; body: unknown }) {
   globalThis.fetch = vi.fn((url: any) => {
     const urlStr = typeof url === 'string' ? url : url.url;
     if (urlStr.includes('/api/admin/profile')) return respond(profile.status, profile.body);
+    if (urlStr.includes('/api/admin/reports/revenue')) {
+      const today = new Date(); const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+      const iso = (d: Date) => d.toISOString().slice(0, 10) + 'T00:00:00Z';
+      return respond(200, {
+        success: true,
+        data: {
+          byDay: [
+            { date: iso(yesterday), revenue: 2000000, orders: 4 },
+            { date: iso(today), revenue: 3500000, orders: 6 },
+          ],
+          topProducts: [{ productId: 'p1', productName: 'Son kem 3CE', quantity: 12, revenue: 3000000 }],
+          totalOrders: 10, cancelledOrders: 1, cancelRate: 10,
+          voucherOrders: 4, voucherUsageRate: 40,
+        },
+      });
+    }
     if (urlStr.includes('/api/admin/dashboard')) {
       return respond(200, {
         success: true,
@@ -90,6 +106,42 @@ describe('AdminPage', () => {
     });
     expect(screen.getByText('Bạn không có quyền truy cập trang quản trị')).toBeInTheDocument();
     expect(screen.queryByTestId('admin-nav-dashboard')).not.toBeInTheDocument();
+  });
+
+  it('403 đợt 4: trang cấm có hướng dẫn cấp quyền từng bước + nút đổi tài khoản', async () => {
+    mockFetchFor({
+      status: 403,
+      body: { success: false, message: 'Bạn không có quyền truy cập khu vực quản trị.' },
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-forbidden')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Cách cấp quyền Super Admin')).toBeInTheDocument();
+    expect(screen.getByText(/UPDATE "Users"/)).toBeInTheDocument();
+    expect(screen.getByText('Về trang chủ')).toBeInTheDocument();
+    expect(screen.getByText('Đăng nhập tài khoản khác')).toBeInTheDocument();
+  });
+
+  it('Doanh thu: SuperAdmin thấy biểu đồ cột + nút chọn 7/30 ngày + top SP bán chạy', async () => {
+    mockFetchFor({
+      status: 200,
+      body: {
+        success: true,
+        data: { id: 'admin-1', email: 'admin@dafl.vn', fullName: 'Super Admin', role: 'SuperAdmin' },
+      },
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-revenue-chart')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('admin-revenue-range-7')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-revenue-range-30')).toBeInTheDocument();
+    expect(screen.getByText(/Son kem 3CE/)).toBeInTheDocument();
+    expect(screen.getByText(/Tỉ lệ hủy đơn/)).toBeInTheDocument();
+    expect(screen.getByText(/Đơn dùng voucher/)).toBeInTheDocument();
   });
 
   it('401: chưa đăng nhập thì chuyển về /login', async () => {

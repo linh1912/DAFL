@@ -57,7 +57,7 @@ const CATALOG_PAGE_SIZE = 12;
 const ORDERS_PAGE_SIZE = 10;
 
 /** Slide hero trang chủ DAFL — ít chữ, tự chạy 4s/slide, ảnh mỹ phẩm Unsplash.
- *  Ảnh full-bleed: son môi flat-lay, skincare, trang điểm (đã kiểm chứng HTTP 200). */
+ *  Ảnh hiện TRỌN (contain) trong banner 340px nằm trong container; chữ trong hộp tối mờ. */
 const HERO_FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=2000&q=80';
 const HERO_SLIDES = [
   {
@@ -217,6 +217,14 @@ export default function App() {
     const timer = window.setInterval(() => {
       setHeroSlide(prev => (prev + 1) % HERO_SLIDES.length);
     }, 4000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Flash Sale: đồng hồ đếm ngược tới 23:59:59 hôm nay, cập nhật mỗi giây;
+  // hết giờ thì tự reset sang ngày hôm sau (đích luôn là cuối ngày hiện tại).
+  const [flashNow, setFlashNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setFlashNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -1888,6 +1896,22 @@ export default function App() {
   const bestSellerIds = new Set(bestSellerProducts.map(p => p.id));
   const suggestedProducts = products.filter(p => !bestSellerIds.has(p.id));
 
+  /** Flash Sale: sản phẩm đang giảm giá mạnh nhất (OriginalPrice > Price), xếp theo
+   *  % giảm, tối đa 8. Lấy từ danh sách sản phẩm đã tải ở trang chủ. */
+  const flashSaleProducts = [...products]
+    .filter(p => (p.originalPrice ?? 0) > p.price)
+    .sort((a, b) => (((b.originalPrice ?? 0) - b.price) / (b.originalPrice ?? 1)) - (((a.originalPrice ?? 0) - a.price) / (a.originalPrice ?? 1)))
+    .slice(0, 8);
+  /** Thời gian còn lại tới 23:59:59 hôm nay (định dạng HH:MM:SS). */
+  const flashSaleEnd = new Date(flashNow);
+  flashSaleEnd.setHours(23, 59, 59, 999);
+  const flashLeftMs = Math.max(0, flashSaleEnd.getTime() - flashNow.getTime());
+  const flashCountdown = [
+    Math.floor(flashLeftMs / 3600000),
+    Math.floor((flashLeftMs % 3600000) / 60000),
+    Math.floor((flashLeftMs % 60000) / 1000),
+  ].map(n => String(n).padStart(2, '0')).join(':');
+
   /**
    * Thẻ sản phẩm trong mục Bán chạy/Gợi ý: cùng sản phẩm đã có ở lưới chính nên phải
    * dùng id hậu tố ('-best'/'-suggest') — nếu giữ nguyên id thì data-testid trùng nhau
@@ -1970,19 +1994,21 @@ export default function App() {
                         if (img.src !== HERO_FALLBACK_IMAGE) img.src = HERO_FALLBACK_IMAGE;
                       }}
                     />
-                    <div className="hero-top-badge">
-                      <Sparkles size={14} color="#ad1457" />
-                      <span>{slide.badge}</span>
+                    <div className="hero-text-box">
+                      <div className="hero-top-badge">
+                        <Sparkles size={14} color="#ad1457" />
+                        <span>{slide.badge}</span>
+                      </div>
+                      <h1 className="hero-title">{slide.title}</h1>
+                      <p className="hero-subtitle">{slide.sub}</p>
+                      <button
+                        type="button"
+                        className="hero-pdd-cta"
+                        onClick={() => document.getElementById('products-section')?.scrollIntoView({ behavior: 'smooth' })}
+                      >
+                        {slide.cta} →
+                      </button>
                     </div>
-                    <h1 className="hero-title">{slide.title}</h1>
-                    <p className="hero-subtitle">{slide.sub}</p>
-                    <button
-                      type="button"
-                      className="hero-pdd-cta"
-                      onClick={() => document.getElementById('products-section')?.scrollIntoView({ behavior: 'smooth' })}
-                    >
-                      {slide.cta} →
-                    </button>
                   </div>
                 ))}
                 <div className="hero-dots" role="tablist" aria-label="Chọn slide">
@@ -2230,6 +2256,26 @@ export default function App() {
                   )}
                 </section>
               </div>
+
+              {/* Flash Sale — ngay dưới banner, trước mục Bán chạy; chỉ khi có SP đang giảm giá */}
+              {selectedCategory === null && flashSaleProducts.length > 0 && (
+                <section className="flash-sale-section" data-testid="flash-sale-section" aria-label="Flash Sale">
+                  <div className="shop-strip-header">
+                    <h2>⚡ Flash Sale</h2>
+                    <span>
+                      Kết thúc trong&nbsp;
+                      <strong data-testid="flash-sale-countdown" style={{ color: '#d81b60', fontSize: '1.15rem' }}>{flashCountdown}</strong>
+                    </span>
+                  </div>
+                  <div className="products-grid">
+                    {flashSaleProducts.map(product => (
+                      <div key={product.id} data-testid={`flash-sale-item-${product.id}`}>
+                        {renderSectionCard(product, '-flash')}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
 
               {/* Bán chạy + Gợi ý cho bạn — chỉ khi xem tất cả sản phẩm */}
               {selectedCategory === null && products.length > 0 && (
@@ -3244,7 +3290,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Mô tả & thông số chi tiết (đánh giá ngoài phạm vi CN — không hiển thị) */}
+                    {/* Mô tả & thông số chi tiết; mục đánh giá ở ngay dưới (đọc từ ProductDetailDto.Evaluations) */}
                     {(() => {
                       const extra = getProductDetailExtra(selectedProduct);
                       return (
@@ -3336,6 +3382,85 @@ export default function App() {
                             </div>
                           </div>
                         </div>
+                      );
+                    })()}
+
+                    {/* Đánh giá của khách hàng — chỉ HIỂN THỊ dữ liệu BE đã trả trong
+                     *  ProductDetailDto.Evaluations (Id, UserName, Rating 1-5, Comment,
+                     *  CreatedAt); không có form gửi đánh giá mới (BE chưa có API tạo). */}
+                    {(() => {
+                      const evals = selectedProduct.evaluations ?? [];
+                      const avg = evals.length > 0
+                        ? evals.reduce((s, e) => s + (e.rating || 0), 0) / evals.length
+                        : (selectedProduct.rating ?? 0);
+                      const total = evals.length > 0 ? evals.length : (selectedProduct.reviewCount ?? 0);
+                      const dist = [5, 4, 3, 2, 1].map(star => ({
+                        star,
+                        count: evals.filter(e => e.rating === star).length,
+                      }));
+                      const maxCount = Math.max(1, ...dist.map(d => d.count));
+                      return (
+                        <section className="detail-section" data-testid="product-reviews-section" style={{ marginTop: 24 }}>
+                          <h4 className="detail-section-title">
+                            <Star size={18} color="var(--primary)" /> Đánh giá của khách hàng
+                          </h4>
+                          {evals.length === 0 ? (
+                            <p style={{ color: 'var(--text-muted)', fontSize: '1rem', margin: 0 }}>
+                              Chưa có đánh giá nào — hãy là người đầu tiên đánh giá sản phẩm này.
+                            </p>
+                          ) : (
+                            <>
+                              <div
+                                data-testid="product-rating-summary"
+                                style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap', background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 18, marginBottom: 16 }}
+                              >
+                                <div style={{ textAlign: 'center' }}>
+                                  <div style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--primary)', lineHeight: 1 }}>{avg.toFixed(1)}</div>
+                                  <div style={{ display: 'flex', gap: 2, justifyContent: 'center', margin: '6px 0' }}>
+                                    {[1, 2, 3, 4, 5].map(i => (
+                                      <Star key={i} size={18} fill={i <= Math.round(avg) ? '#f5a623' : 'none'} color="#f5a623" />
+                                    ))}
+                                  </div>
+                                  <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{total} đánh giá</div>
+                                </div>
+                                <div style={{ flex: 1, minWidth: 220 }}>
+                                  {dist.map(d => (
+                                    <div key={d.star} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: '0.9rem' }}>
+                                      <span style={{ width: 28 }}>{d.star} ★</span>
+                                      <div style={{ flex: 1, height: 8, background: '#f0f0f0', borderRadius: 999, overflow: 'hidden' }}>
+                                        <div style={{ width: `${(d.count / maxCount) * 100}%`, height: '100%', background: '#d81b60', borderRadius: 999 }} />
+                                      </div>
+                                      <span style={{ width: 24, textAlign: 'right', color: 'var(--text-muted)' }}>{d.count}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                                {evals.map(ev => (
+                                  <li key={ev.id} data-testid="product-review-item" style={{ borderBottom: '1px solid var(--border-subtle)', padding: '12px 0' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                                      <span style={{ width: 36, height: 36, borderRadius: '50%', background: '#ffe8f0', color: '#d81b60', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 }}>
+                                        {(ev.userName || 'K').charAt(0).toUpperCase()}
+                                      </span>
+                                      <div>
+                                        <div style={{ fontWeight: 700, fontSize: '1rem' }}>{ev.userName}</div>
+                                        <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                                          {[1, 2, 3, 4, 5].map(i => (
+                                            <Star key={i} size={14} fill={i <= ev.rating ? '#f5a623' : 'none'} color="#f5a623" />
+                                          ))}
+                                          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginLeft: 6 }}>
+                                            {new Date(ev.createdAt).toLocaleDateString('vi-VN')}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <p style={{ margin: 0, fontSize: '1rem', lineHeight: 1.6 }}>{ev.comment}</p>
+                                  </li>
+                                ))}
+                              </ul>
+                            </>
+                          )}
+                        </section>
                       );
                     })()}
                   </>
@@ -3554,7 +3679,21 @@ export default function App() {
         {/* Standalone simulated payment and success pages */}
         <Route path="/mock-payos" element={<MockPayOSStandalonePage />} />
         <Route path="/payment-success" element={<PaymentSuccessPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* Trang 404: đường dẫn không tồn tại (không tự chuyển về trang chủ nữa) */}
+        <Route
+          path="*"
+          element={
+            <div style={{ padding: '3rem 1rem', maxWidth: 720, margin: '0 auto', textAlign: 'center' }} data-testid="not-found-page">
+              <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }} aria-hidden="true">🔍</div>
+              <h1 style={{ fontSize: '2.2rem', color: '#d81b60', margin: '0 0 0.5rem' }}>Không tìm thấy trang</h1>
+              <p style={{ color: '#555', margin: '0 0 1.5rem' }}>Trang bạn vừa mở không tồn tại hoặc đã được chuyển đi nơi khác.</p>
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+                <button type="button" className="btn btn-primary" onClick={() => navigate('/')}>Về trang chủ</button>
+                <button type="button" className="btn btn-secondary" onClick={() => navigate(-1)}>Quay lại</button>
+              </div>
+            </div>
+          }
+        />
       </Routes>
 
       {!isStandalone && <SiteFooter />}

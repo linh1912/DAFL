@@ -324,4 +324,137 @@ describe('App Routing & Navigation System (React Router)', () => {
     expect(localStorage.getItem('dafl_guest_cart')).toBeNull();
     expect(await screen.findByTestId('cart-badge-count')).toHaveTextContent('1');
   });
+
+  it('hero đợt 4: banner đủ 3 slide, chữ tiêu đề hiện trong hộp tối mờ, ảnh hiện trọn (contain)', async () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('hero-carousel')).toBeInTheDocument();
+    });
+    // Đủ 3 slide + nút chuyển + chấm tròn, tiêu đề slide 1 đọc được.
+    for (const i of [0, 1, 2]) {
+      expect(screen.getByTestId(`hero-slide-${i}`)).toBeInTheDocument();
+      expect(screen.getByTestId(`hero-dot-${i}`)).toBeInTheDocument();
+    }
+    expect(screen.getByTestId('hero-prev-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('hero-next-btn')).toBeInTheDocument();
+    expect(screen.getByText(/DAFL — Mỹ phẩm chính hãng/i)).toBeInTheDocument();
+    expect(screen.getByText(/Mua mỹ phẩm, freeship tận nhà/i)).toBeInTheDocument();
+    expect(screen.getByText(/Tích điểm mỗi đơn, lên hạng nhận ưu đãi/i)).toBeInTheDocument();
+    // Chữ nằm trong hộp tối mờ (class hero-text-box) — không bị ảnh che.
+    const box = document.querySelector('.hero-text-box');
+    expect(box).not.toBeNull();
+    expect(box).toHaveTextContent('DAFL — Mỹ phẩm chính hãng');
+  });
+
+  it('Flash Sale: có SP giảm giá thì hiện mục Flash Sale + đồng hồ đếm ngược HH:MM:SS', async () => {
+    const product = {
+      id: 'prod-flash',
+      categoryId: 'cat-1',
+      categoryName: 'Son môi',
+      name: 'Son kem 3CE Velvet Lip Tint',
+      slug: 'son-kem-3ce',
+      description: 'Son kem lì lâu trôi',
+      price: 250000,
+      originalPrice: 500000,
+      availableStock: 20,
+      imageUrl: 'https://images.unsplash.com/photo-1586495777744-4413f21062fa?w=600',
+      rating: 4.9,
+      reviewCount: 120,
+    };
+    const respond = (body: unknown) => Promise.resolve({
+      json: () => Promise.resolve(body),
+    } as Response);
+    globalThis.fetch = vi.fn((url: any) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('/api/auth/me')) return respond({ success: false, data: null });
+      if (urlStr.includes('/api/categories')) {
+        return respond({ success: true, data: [{ id: 'cat-1', name: 'Son môi', slug: 'son-moi' }] });
+      }
+      if (urlStr.includes('/api/products')) return respond({ success: true, data: [product] });
+      if (urlStr.includes('/api/vouchers')) return respond({ success: true, data: [] });
+      if (urlStr.includes('/api/notifications')) return respond({ success: true, data: [] });
+      return respond({ success: true, data: [] });
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('flash-sale-section')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('flash-sale-countdown')).toHaveTextContent(/^\d{2}:\d{2}:\d{2}$/);
+    expect(screen.getByTestId('flash-sale-item-prod-flash')).toBeInTheDocument();
+  });
+
+  it('Product Detail: hiện mục đánh giá sao + danh sách đánh giá từ BE', async () => {
+    const product = {
+      id: 'prod-review',
+      categoryId: 'cat-1',
+      categoryName: 'Son môi',
+      name: 'Son kem 3CE Velvet Lip Tint',
+      slug: 'son-kem-3ce',
+      description: 'Son kem lì lâu trôi',
+      price: 250000,
+      originalPrice: 500000,
+      availableStock: 20,
+      imageUrl: 'https://images.unsplash.com/photo-1586495777744-4413f21062fa?w=600',
+      rating: 4.5,
+      reviewCount: 2,
+      evaluations: [
+        { id: 'ev-1', productId: 'prod-review', userName: 'Lan Anh', rating: 5, comment: 'Son lên màu chuẩn, lì cả ngày.', createdAt: '2026-11-07T10:00:00Z' },
+        { id: 'ev-2', productId: 'prod-review', userName: 'Minh Quân', rating: 4, comment: 'Màu đẹp, hơi khô môi nhẹ.', createdAt: '2026-11-06T10:00:00Z' },
+      ],
+    };
+    const respond = (body: unknown) => Promise.resolve({
+      json: () => Promise.resolve(body),
+    } as Response);
+    globalThis.fetch = vi.fn((url: any) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('/api/auth/me')) return respond({ success: false, data: null });
+      if (urlStr.includes('/api/categories')) {
+        return respond({ success: true, data: [{ id: 'cat-1', name: 'Son môi', slug: 'son-moi' }] });
+      }
+      if (urlStr.includes('/api/products/prod-review')) return respond({ success: true, data: product });
+      if (urlStr.includes('/api/products')) return respond({ success: true, data: [product] });
+      if (urlStr.includes('/api/vouchers')) return respond({ success: true, data: [] });
+      if (urlStr.includes('/api/notifications')) return respond({ success: true, data: [] });
+      return respond({ success: true, data: [] });
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/product/prod-review']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('product-reviews-section')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('product-rating-summary')).toBeInTheDocument();
+    expect(screen.getByText('Son lên màu chuẩn, lì cả ngày.')).toBeInTheDocument();
+    expect(screen.getByText('Màu đẹp, hơi khô môi nhẹ.')).toBeInTheDocument();
+    expect(screen.getAllByTestId('product-review-item')).toHaveLength(2);
+  });
+
+  it('404: đường dẫn lạ hiện trang Không tìm thấy trang, có nút về trang chủ', async () => {
+    render(
+      <MemoryRouter initialEntries={['/duong-dan-khong-ton-tai']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('not-found-page')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Không tìm thấy trang')).toBeInTheDocument();
+    expect(screen.getByText('Về trang chủ')).toBeInTheDocument();
+  });
 });

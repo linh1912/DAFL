@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
-import { apiJson } from '../../utils/api';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { apiJson, clearToken } from '../../utils/api';
 
 /**
  * Trang quản trị DAFL — dùng các endpoint /api/admin/* đã có ở backend
@@ -15,6 +15,17 @@ interface DashboardData {
   ordersByStatus?: Record<string, number>;
   lowStockProducts?: Array<{ id: string; name: string; stock: number }>;
   expiringVouchers?: Array<{ code: string; usedCount: number; maxUses?: number | null; expiryDate?: string | null }>;
+}
+/** Báo cáo doanh thu — đúng shape RevenueReportDto ở BE (AdminFeatures.cs):
+ *  ByDay (date/revenue/orders), TopProducts (productId/productName/quantity/revenue),
+ *  totalOrders, cancelledOrders, cancelRate (%), voucherOrders, voucherUsageRate (%).
+ *  JSON trả về dạng camelCase như các DTO admin khác. */
+interface DailyRevenue { date: string; revenue: number; orders: number; }
+interface RevenueTopProduct { productId: string; productName: string; quantity: number; revenue: number; }
+interface RevenueReport {
+  byDay?: DailyRevenue[]; topProducts?: RevenueTopProduct[];
+  totalOrders?: number; cancelledOrders?: number; cancelRate?: number;
+  voucherOrders?: number; voucherUsageRate?: number;
 }
 interface AdminOrderRow {
   id: string; orderDisplayCode?: string | null; orderCode: number; customerName: string;
@@ -127,6 +138,8 @@ const NAV: Array<{ key: Tab; label: string; testid: string }> = [
 export default function AdminPage() {
   const [gate, setGate] = useState<'checking' | 'ok' | 'forbidden' | 'no-admin' | 'unauthorized'>('checking');
   const [gateMsg, setGateMsg] = useState('');
+  const [currentEmail, setCurrentEmail] = useState('');
+  const navigate = useNavigate();
   const [profile, setProfile] = useState<AdminProfile | null>(null);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [notice, setNotice] = useState<string | null>(null);
@@ -136,6 +149,12 @@ export default function AdminPage() {
   const [dash, setDash] = useState<DashboardData | null>(null);
   const [dashLoading, setDashLoading] = useState(false);
   const [dashError, setDashError] = useState<string | null>(null);
+
+  // Doanh thu (biểu đồ) — chỉ đọc GET /api/admin/reports/revenue
+  const [revenue, setRevenue] = useState<RevenueReport | null>(null);
+  const [revenueLoading, setRevenueLoading] = useState(false);
+  const [revenueError, setRevenueError] = useState<string | null>(null);
+  const [revenueRange, setRevenueRange] = useState<7 | 30>(7);
 
   // Đơn hàng
   const [orders, setOrders] = useState<AdminOrderRow[]>([]);
@@ -224,7 +243,18 @@ export default function AdminPage() {
       const { status, body } = await apiJson<AdminProfile>('/api/admin/profile', { skipAuthHandler: true });
       if (cancelled) return;
       if (status === 401) { setGate('unauthorized'); return; }
-      if (status === 403) { setGateMsg(body?.message || 'Bạn không có quyền truy cập trang quản trị.'); setGate('forbidden'); return; }
+      if (status === 403) {
+        setGateMsg(body?.message || 'Bạn không có quyền truy cập trang quản trị.');
+        // Lấy email tài khoản đang đăng nhập để hiện trong trang 403 (phòng thủ:
+        // /api/auth/me trả envelope { success, data: { email } } như App.tsx dùng).
+        try {
+          const me = await apiJson<{ email?: string }>('/api/auth/me', { skipAuthHandler: true });
+          const email = me.body?.data?.email;
+          if (typeof email === 'string' && email) setCurrentEmail(email);
+        } catch { /* không lấy được email thì vẫn hiện trang 403 bình thường */ }
+        setGate('forbidden');
+        return;
+      }
       if (body?.success && body.data && (body.data.role === 'SuperAdmin' || body.data.role === 'Admin')) {
         setProfile(body.data);
         setGate('ok');
@@ -247,6 +277,21 @@ export default function AdminPage() {
       else setDashError(apiErr(body, 'Không tải được tổng quan.'));
     } catch { setDashError('Không thể kết nối đến máy chủ.'); }
     finally { setDashLoading(false); }
+  }, []);
+
+  /** Báo cáo doanh thu theo ngày — GET /api/admin/reports/revenue?from&to (BE tính
+   *  theo trạng thái đơn có doanh thu: Paid/Confirmed/Preparing/Shipping/Delivered/
+   *  Completed; mặc định BE lấy 30 ngày nếu không truyền from/to). */
+  const loadRevenue = useCallback(async (range: 7 | 30) => {
+    setRevenueLoading(true); setRevenueError(null);
+    try {
+      const to = new Date(); const from = new Date(); from.setDate(to.getDate() - (range - 1));
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+      const { body } = await apiJson<RevenueReport>(`/api/admin/reports/revenue?from=${iso(from)}&to=${iso(to)}`, { skipAuthHandler: true });
+      if (body?.success && body.data) setRevenue(body.data);
+      else setRevenueError(apiErr(body, 'Không tải được báo cáo doanh thu.'));
+    } catch { setRevenueError('Không thể kết nối đến máy chủ.'); }
+    finally { setRevenueLoading(false); }
   }, []);
 
   const loadCategories = useCallback(async () => {
@@ -345,7 +390,7 @@ export default function AdminPage() {
   // Tải lười theo tab (mỗi tab 1 lần, có nút tải lại).
   useEffect(() => {
     if (gate !== 'ok') return;
-    if (tab === 'dashboard' && !loadedRef.current.has('dashboard')) { loadedRef.current.add('dashboard'); void loadDashboard(); }
+    if (tab === 'dashboard' && !loadedRef.current.has('dashboard')) { loadedRef.current.add('dashboard'); void loadDashboard(); void loadRevenue(7); }
     if (tab === 'orders' && !loadedRef.current.has('orders')) { loadedRef.current.add('orders'); void loadOrders(); }
     if (tab === 'products' && !loadedRef.current.has('products')) { loadedRef.current.add('products'); void loadProducts(); void loadCategories(); }
     if (tab === 'categories' && !loadedRef.current.has('categories')) { loadedRef.current.add('categories'); void loadCategories(); }
@@ -353,31 +398,64 @@ export default function AdminPage() {
     if (tab === 'customers' && !loadedRef.current.has('customers')) { loadedRef.current.add('customers'); void loadCustomers(); }
     if (tab === 'membership' && !loadedRef.current.has('membership')) { loadedRef.current.add('membership'); void loadTiers(); }
     if (tab === 'returns' && !loadedRef.current.has('returns')) { loadedRef.current.add('returns'); void loadReturns(); void loadAudit(); }
-  }, [tab, gate, loadDashboard, loadOrders, loadProducts, loadCategories, loadPromos, loadCustomers, loadTiers, loadReturns, loadAudit]);
+  }, [tab, gate, loadDashboard, loadRevenue, loadOrders, loadProducts, loadCategories, loadPromos, loadCustomers, loadTiers, loadReturns, loadAudit]);
 
   // ---------- Gate ----------
   if (gate === 'checking') return <div style={{ padding: '2rem', fontSize: '1.1rem' }} data-testid="admin-page">Đang kiểm tra quyền...</div>;
   if (gate === 'unauthorized') return <Navigate to="/login" replace />;
   if (gate === 'forbidden') {
+    const sqlEmail = currentEmail || 'email-cua-ban';
     return (
-      <div style={{ padding: '2rem', fontSize: '1.1rem' }} data-testid="admin-forbidden">
-        <h1 style={{ fontSize: '2.2rem', color: PINK }}>Bạn không có quyền truy cập trang quản trị</h1>
-        <p>{gateMsg || 'Chỉ tài khoản Super Admin mới được vào khu vực này.'}</p>
-        <a href="/" style={{ color: PINK }}>Về trang chủ</a>
+      <div style={{ padding: '2.5rem 1rem', fontSize: '1.05rem', maxWidth: 720, margin: '0 auto' }} data-testid="admin-forbidden">
+        <div style={{ background: '#fff', border: `1px solid #f3c1d3`, borderRadius: 16, padding: '2rem', boxShadow: '0 6px 24px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+          <div style={{ width: 72, height: 72, borderRadius: '50%', background: '#ffe8f0', color: PINK, fontSize: '2.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }} aria-hidden="true">🔒</div>
+          <h1 style={{ fontSize: '2.2rem', color: PINK, margin: '0 0 0.5rem' }}>Bạn không có quyền truy cập trang quản trị</h1>
+          <p style={{ color: '#555', margin: '0 0 0.5rem' }}>{gateMsg || 'Chỉ tài khoản Super Admin mới được vào khu vực này.'}</p>
+          {currentEmail && (
+            <p style={{ margin: '0 0 1rem' }}>Tài khoản đang đăng nhập: <strong>{currentEmail}</strong> (vai trò Khách hàng).</p>
+          )}
+        </div>
+        <div style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 16, padding: '1.5rem 2rem', marginTop: '1rem', boxShadow: '0 6px 24px rgba(0,0,0,0.06)' }}>
+          <h2 style={{ fontSize: '1.6rem', margin: '0 0 0.75rem' }}>Cách cấp quyền Super Admin</h2>
+          <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: 1.8 }}>
+            <li>Mở PowerShell tại thư mục <code>C:\Users\Acer\DAFL</code>.</li>
+            <li>Chạy lệnh SQL sau (đổi email thành email tài khoản của bạn):</li>
+          </ol>
+          <pre style={{ background: '#f5f5f5', padding: '1rem', overflowX: 'auto', borderRadius: 8, fontSize: '0.95rem' }}>
+            {`docker compose exec postgres psql -U dafl -d dafl_db -c "UPDATE "Users" SET "Role"='SuperAdmin' WHERE "Email"='${sqlEmail}';"`}
+          </pre>
+          <ol start={3} style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: 1.8 }}>
+            <li>Đăng xuất khỏi web rồi đăng nhập lại bằng đúng tài khoản đó.</li>
+            <li>Mở lại địa chỉ <code>/admin</code>.</li>
+          </ol>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '1.25rem' }}>
+            <button type="button" onClick={() => navigate('/')} style={btnStyle}>Về trang chủ</button>
+            <button type="button" onClick={() => { clearToken(); navigate('/login'); }} style={btnGhostStyle}>Đăng nhập tài khoản khác</button>
+          </div>
+        </div>
       </div>
     );
   }
   if (gate === 'no-admin') {
     return (
-      <div style={{ padding: '2rem', fontSize: '1.1rem' }} data-testid="admin-page">
-        <h1 style={{ fontSize: '2.2rem', color: PINK }}>Chưa có tài khoản Super Admin</h1>
-        <p>{gateMsg}</p>
-        <p>Đăng nhập bằng tài khoản của bạn rồi chạy SQL:</p>
-        <pre style={{ background: '#f5f5f5', padding: '1rem', overflowX: 'auto' }}>
-          {`UPDATE "Users" SET "Role"='SuperAdmin' WHERE "Email"='email-cua-ban';`}
-        </pre>
-        <p>Sau đó đăng nhập lại.</p>
-        <a href="/" style={{ color: PINK }}>Về trang chủ</a>
+      <div style={{ padding: '2.5rem 1rem', fontSize: '1.05rem', maxWidth: 720, margin: '0 auto' }} data-testid="admin-page">
+        <div style={{ background: '#fff', border: '1px solid #f3c1d3', borderRadius: 16, padding: '2rem', boxShadow: '0 6px 24px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+          <div style={{ width: 72, height: 72, borderRadius: '50%', background: '#ffe8f0', color: PINK, fontSize: '2.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }} aria-hidden="true">🔒</div>
+          <h1 style={{ fontSize: '2.2rem', color: PINK, margin: '0 0 0.5rem' }}>Chưa có tài khoản Super Admin</h1>
+          <p style={{ color: '#555', margin: 0 }}>{gateMsg}</p>
+        </div>
+        <div style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 16, padding: '1.5rem 2rem', marginTop: '1rem', boxShadow: '0 6px 24px rgba(0,0,0,0.06)' }}>
+          <h2 style={{ fontSize: '1.6rem', margin: '0 0 0.75rem' }}>Cách tạo Super Admin</h2>
+          <p style={{ lineHeight: 1.8, margin: '0 0 0.75rem' }}>Đăng nhập bằng tài khoản của bạn rồi chạy SQL trong PowerShell tại <code>C:\Users\Acer\DAFL</code>:</p>
+          <pre style={{ background: '#f5f5f5', padding: '1rem', overflowX: 'auto', borderRadius: 8, fontSize: '0.95rem' }}>
+            {`docker compose exec postgres psql -U dafl -d dafl_db -c "UPDATE "Users" SET "Role"='SuperAdmin' WHERE "Email"='email-cua-ban';"}`}
+          </pre>
+          <p style={{ lineHeight: 1.8 }}>Sau đó đăng nhập lại rồi mở <code>/admin</code>.</p>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '1.25rem' }}>
+            <button type="button" onClick={() => navigate('/')} style={btnStyle}>Về trang chủ</button>
+            <button type="button" onClick={() => { clearToken(); navigate('/login'); }} style={btnGhostStyle}>Đăng nhập tài khoản khác</button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -660,6 +738,81 @@ export default function AdminPage() {
                   </div>
                 ))}
               </div>
+              <h3 style={{ fontSize: '1.3rem' }}>Doanh thu</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                <button type="button" data-testid="admin-revenue-range-7" onClick={() => { setRevenueRange(7); void loadRevenue(7); }} style={revenueRange === 7 ? btnStyle : btnGhostStyle}>7 ngày</button>
+                <button type="button" data-testid="admin-revenue-range-30" onClick={() => { setRevenueRange(30); void loadRevenue(30); }} style={revenueRange === 30 ? btnStyle : btnGhostStyle}>30 ngày</button>
+              </div>
+              {revenueLoading && <p>Đang tải báo cáo doanh thu...</p>}
+              {revenueError && <p style={{ color: '#c62828' }}>{revenueError}</p>}
+              {!revenueLoading && !revenueError && revenue && (
+                <>
+                  {(revenue.totalOrders ?? 0) === 0 ? (
+                    <p>Chưa có doanh thu trong khoảng thời gian này.</p>
+                  ) : (
+                    <div data-testid="admin-revenue-chart" style={{ border: '1px solid #eee', borderRadius: 12, padding: '1rem', background: '#fff', marginBottom: '1rem' }}>
+                      {(() => {
+                        // Lấp đủ ngày trong khoảng (ngày không có đơn → doanh thu 0).
+                        const byDate = new Map((revenue.byDay ?? []).map(d => [String(d.date).slice(0, 10), d]));
+                        const days: Array<{ label: string; revenue: number; orders: number }> = [];
+                        for (let i = revenueRange - 1; i >= 0; i--) {
+                          const d = new Date(); d.setDate(d.getDate() - i);
+                          const found = byDate.get(d.toISOString().slice(0, 10));
+                          days.push({ label: `${d.getDate()}/${d.getMonth() + 1}`, revenue: found?.revenue ?? 0, orders: found?.orders ?? 0 });
+                        }
+                        const max = Math.max(1, ...days.map(d => d.revenue));
+                        const W = 720; const H = 220; const PAD = 28;
+                        const bw = (W - PAD * 2) / days.length;
+                        const labelEvery = Math.max(1, Math.ceil(days.length / 8));
+                        return (
+                          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="Biểu đồ doanh thu theo ngày">
+                            {days.map((d, i) => {
+                              const h = (d.revenue / max) * (H - PAD * 2 - 20);
+                              const x = PAD + i * bw + bw * 0.18;
+                              const y = H - PAD - h;
+                              return (
+                                <g key={d.label}>
+                                  <rect x={x} y={y} width={bw * 0.64} height={Math.max(h, d.revenue > 0 ? 2 : 0)} rx={4} fill={PINK}>
+                                    <title>{d.label}: {fmtMoney(d.revenue)} ({d.orders} đơn)</title>
+                                  </rect>
+                                  {(i % labelEvery === 0 || i === days.length - 1) && (
+                                    <text x={PAD + i * bw + bw / 2} y={H - 8} fontSize={11} textAnchor="middle" fill="#666">{d.label}</text>
+                                  )}
+                                </g>
+                              );
+                            })}
+                            <text x={PAD} y={16} fontSize={12} fill="#666">Cao nhất: {fmtMoney(max)}</text>
+                          </svg>
+                        );
+                      })()}
+                    </div>
+                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
+                    <div style={{ border: '1px solid #eee', borderRadius: 12, padding: '1rem', background: '#fff' }}>
+                      <div style={{ color: '#666', fontSize: '1rem' }}>Tổng đơn</div>
+                      <div style={{ fontSize: '1.6rem', fontWeight: 700, color: PINK }}>{revenue.totalOrders ?? 0}</div>
+                    </div>
+                    <div style={{ border: '1px solid #eee', borderRadius: 12, padding: '1rem', background: '#fff' }}>
+                      <div style={{ color: '#666', fontSize: '1rem' }}>Tỉ lệ hủy đơn</div>
+                      <div style={{ fontSize: '1.6rem', fontWeight: 700, color: PINK }}>{revenue.cancelRate ?? 0}% ({revenue.cancelledOrders ?? 0} đơn)</div>
+                    </div>
+                    <div style={{ border: '1px solid #eee', borderRadius: 12, padding: '1rem', background: '#fff' }}>
+                      <div style={{ color: '#666', fontSize: '1rem' }}>Đơn dùng voucher</div>
+                      <div style={{ fontSize: '1.6rem', fontWeight: 700, color: PINK }}>{revenue.voucherOrders ?? 0} ({revenue.voucherUsageRate ?? 0}%)</div>
+                    </div>
+                  </div>
+                  <h4 style={{ fontSize: '1.15rem', margin: '0 0 0.5rem' }}>Sản phẩm bán chạy</h4>
+                  {(revenue.topProducts ?? []).length === 0 ? (
+                    <p>Chưa có sản phẩm bán chạy trong khoảng này.</p>
+                  ) : (
+                    <ol style={{ margin: '0 0 1rem', paddingLeft: 22, lineHeight: 1.8 }}>
+                      {revenue.topProducts!.map(p => (
+                        <li key={p.productId}>{p.productName} — {p.quantity} SP, {fmtMoney(p.revenue)}</li>
+                      ))}
+                    </ol>
+                  )}
+                </>
+              )}
               <h3 style={{ fontSize: '1.3rem' }}>Đơn hàng theo trạng thái</h3>
               {Object.keys(byStatus).length === 0 && !dashLoading ? <p>Chưa có đơn hàng.</p> : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
