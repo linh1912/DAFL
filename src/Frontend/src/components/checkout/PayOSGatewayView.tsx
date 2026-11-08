@@ -103,7 +103,7 @@ export const PayOSGatewayView: React.FC<PayOSGatewayViewProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-secondary"
-              style={{ padding: '8px 16px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', marginLeft: 'auto', color: '#e40046', fontWeight: 700 }}
+              style={{ padding: '8px 16px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', marginLeft: 'auto', color: '#d81b60', fontWeight: 700 }}
             >
               <ExternalLink size={14} /> Mở PayOS ở Tab Mới
             </a>
@@ -116,7 +116,7 @@ export const PayOSGatewayView: React.FC<PayOSGatewayViewProps> = ({
           {/* VietQR Code Column */}
           <div style={{ textAlign: 'center', background: 'var(--bg-subtle, #f9fafb)', padding: 16, borderRadius: 12, border: '1px solid var(--border-subtle, #e5e7eb)' }}>
             <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main, #374151)', marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              <QrCode size={15} color="#e40046" /> Quét mã VietQR để thanh toán
+              <QrCode size={15} color="#d81b60" /> Quét mã VietQR để thanh toán
             </div>
             <img
               src={qrUrl}
@@ -162,7 +162,7 @@ export const PayOSGatewayView: React.FC<PayOSGatewayViewProps> = ({
             <div style={{ background: 'var(--bg-subtle, #f9fafb)', padding: 10, borderRadius: 8, fontSize: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ color: 'var(--text-muted, #6b7280)', fontSize: '0.75rem' }}>Nội dung chuyển khoản (bắt buộc)</div>
-                <strong style={{ color: '#e40046', fontWeight: 800 }}>{finalDescription}</strong>
+                <strong style={{ color: '#d81b60', fontWeight: 800 }}>{finalDescription}</strong>
               </div>
               <button
                 type="button"
@@ -198,7 +198,7 @@ export const PayOSGatewayView: React.FC<PayOSGatewayViewProps> = ({
               <button
                 type="button"
                 onClick={onSimulateSuccess}
-                style={{ background: '#e40046', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: 6, fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem' }}
+                style={{ background: '#d81b60', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: 6, fontWeight: 700, cursor: 'pointer', fontSize: '0.75rem' }}
               >
                 Kiểm tra trạng thái thanh toán
               </button>

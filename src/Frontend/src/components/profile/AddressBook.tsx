@@ -18,7 +18,7 @@ import {
  */
 
 const MAX_ADDRESSES = 5;
-const ERROR_COLOR = '#e40046';
+const ERROR_COLOR = '#d81b60';
 const fieldErrorStyle: React.CSSProperties = { color: ERROR_COLOR, fontSize: '0.8rem', marginTop: 6 };
 const errorBorder = (hasError: boolean): React.CSSProperties => (hasError ? { borderColor: ERROR_COLOR } : {});
 

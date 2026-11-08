@@ -55,31 +55,50 @@ const CATALOG_PAGE_SIZE = 12;
 /** Số đơn mỗi trang ở trang Đơn hàng. */
 const ORDERS_PAGE_SIZE = 10;
 
-/** Slide hero trang chủ GlowMart — ít chữ, tự chạy 5s/slide. */
+/** Slide hero trang chủ DAFL — ít chữ, tự chạy 4s/slide, ảnh mỹ phẩm Unsplash. */
 const HERO_SLIDES = [
   {
     badge: 'FLASH SALE • GIẢM ĐẾN 50%',
-    title: 'GlowMart — Sàn mỹ phẩm đa gian hàng',
+    title: 'DAFL — Mỹ phẩm chính hãng',
     sub: 'Son, serum, kem chống nắng chính hãng từ nhiều shop.',
     cta: 'Mua ngay',
+    image: 'https://images.unsplash.com/photo-1586495777744-4413f21062fa?auto=format&fit=crop&w=1600&q=80',
   },
   {
     badge: 'FREESHIP ĐƠN TỪ 299K',
     title: 'Mua mỹ phẩm, freeship tận nhà',
     sub: 'Giao nhanh 2–4 ngày, đổi trả trong 30 ngày.',
     cta: 'Xem deal freeship',
+    image: 'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=1600&q=80',
   },
   {
-    badge: 'HỘI VIÊN GLOWMART',
+    badge: 'HỘI VIÊN DAFL',
     title: 'Tích điểm mỗi đơn, lên hạng nhận ưu đãi',
     sub: 'Thường • Bạc • Vàng • Kim cương.',
     cta: 'Khám phá hội viên',
+    image: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=1600&q=80',
   },
 ];
 
+/** Hàng icon danh mục mỹ phẩm (kiểu Cocolux) — slug khớp danh mục BE thì dùng tên
+ *  danh mục thật, không khớp thì dùng nhãn hardcode; bấm vào lọc theo danh mục
+ *  mỹ phẩm; BE đã seed đủ 6 danh mục này (DbInitializer: son-moi, cham-soc-da,
+ *  trang-diem, nuoc-hoa, cham-soc-co-the, cham-soc-toc) nên bấm icon lọc đúng nhóm. */
+const COSMETIC_ICON_CATEGORIES = [
+  { slug: 'son-moi', label: 'Son môi', icon: '💄' },
+  { slug: 'cham-soc-da', label: 'Chăm sóc da', icon: '🧴' },
+  { slug: 'trang-diem', label: 'Trang điểm', icon: '💋' },
+  { slug: 'nuoc-hoa', label: 'Nước hoa', icon: '🌸' },
+  { slug: 'cham-soc-co-the', label: 'Chăm sóc cơ thể', icon: '🛁' },
+  { slug: 'cham-soc-toc', label: 'Chăm sóc tóc', icon: '💇' },
+];
+
+/** Dải thương hiệu mỹ phẩm nổi bật (chữ/logo text, không cần ảnh). */
+const FEATURED_BRANDS = ['La Roche-Posay', "L'Oréal", '3CE', 'Peripera', 'Clio', 'CeraVe'];
+
 /** Gian hàng mỹ phẩm nổi bật (hiển thị — dữ liệu shop thật chờ BE có entity Shop). */
 const FEATURED_SHOPS = [
-  { slug: 'glow-official', name: 'Glow Official', tag: 'Chính hãng', rating: '4.9', sold: '12k đã bán' },
+  { slug: 'dafl-official', name: 'DAFL Official', tag: 'Chính hãng', rating: '4.9', sold: '12k đã bán' },
   { slug: 'lumiere-beauty', name: 'Lumière Beauty', tag: 'Chính hãng', rating: '4.8', sold: '8,5k đã bán' },
   { slug: 'pureskin-lab', name: 'PureSkin Lab', tag: 'Skincare', rating: '4.9', sold: '6k đã bán' },
   { slug: 'rose-botanica', name: 'Rose Botanica', tag: 'Thiên nhiên', rating: '4.7', sold: '4k đã bán' },
@@ -189,12 +208,12 @@ export default function App() {
   const [catalogKnownTotal, setCatalogKnownTotal] = useState<number | null>(null);
   const catalogRequestSeq = useRef(0);
 
-  // Hero carousel trang chủ: tự chạy 5s/slide, có thể bấm dot để đổi.
+  // Hero carousel trang chủ: tự chạy 4s/slide, có thể bấm dot / prev-next để đổi.
   const [heroSlide, setHeroSlide] = useState(0);
   useEffect(() => {
     const timer = window.setInterval(() => {
       setHeroSlide(prev => (prev + 1) % HERO_SLIDES.length);
-    }, 5000);
+    }, 4000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -1809,6 +1828,42 @@ export default function App() {
     onClearAuthErrors: clearAuthErrors,
   };
 
+  /** Lọc theo danh mục mỹ phẩm: khớp slug thì dùng id đó, không khớp thì về danh
+   *  mục đầu tiên. Không hardcode id danh mục. */
+  const resolveCosmeticCategoryId = (slug: string): string | null =>
+    categories.find(c => c.slug === slug)?.id
+    ?? categories[0]?.id
+    ?? null;
+
+  const goToCosmeticCategory = (slug: string) => {
+    const id = resolveCosmeticCategoryId(slug);
+    if (id) setSelectedCategory(id);
+    document.getElementById('products-section')?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  /** Bán chạy: top sản phẩm theo rating rồi reviewCount (tối đa 8); còn lại là gợi ý. */
+  const bestSellerProducts = [...products]
+    .sort((a, b) => ((b.rating ?? 0) - (a.rating ?? 0)) || ((b.reviewCount ?? 0) - (a.reviewCount ?? 0)))
+    .slice(0, 8);
+  const bestSellerIds = new Set(bestSellerProducts.map(p => p.id));
+  const suggestedProducts = products.filter(p => !bestSellerIds.has(p.id));
+
+  /**
+   * Thẻ sản phẩm trong mục Bán chạy/Gợi ý: cùng sản phẩm đã có ở lưới chính nên phải
+   * dùng id hậu tố ('-best'/'-suggest') — nếu giữ nguyên id thì data-testid trùng nhau
+   * (Testing Library yêu cầu testid duy nhất, các test CN-06/CN-04 dùng findByTestId sẽ
+   * fail "Found multiple elements"). Chỉ testid đổi theo id; onAddToCart/onOpenDetail
+   * vẫn map về sản phẩm gốc nên thêm giỏ/mở chi tiết hoàn toàn đúng. Không sửa ProductCard.
+   */
+  const renderSectionCard = (product: Product, suffix: string) => (
+    <ProductCard
+      key={`${product.id}${suffix}`}
+      product={{ ...product, id: `${product.id}${suffix}` }}
+      onOpenDetail={() => openProductDetail(product)}
+      onAddToCart={() => addToCart(product)}
+    />
+  );
+
   const isStandalone = location.pathname.startsWith('/mock-payos') || location.pathname.startsWith('/payment-success');
 
   return (
@@ -1818,7 +1873,7 @@ export default function App() {
         <div className="toast-container">
           <div className="toast-alert" data-testid={toastAlert.testId}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <Sparkles size={16} color="#e40046" />
+              <Sparkles size={16} color="#d81b60" />
               <strong style={{ fontSize: '0.875rem', color: 'var(--text-main)' }}>{toastAlert.title}</strong>
             </div>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{toastAlert.message}</p>
@@ -1863,8 +1918,9 @@ export default function App() {
                     data-testid={`hero-slide-${i}`}
                     aria-hidden={i !== heroSlide}
                   >
+                    <img className="hero-slide-img" src={slide.image} alt="" aria-hidden="true" loading={i === 0 ? 'eager' : 'lazy'} />
                     <div className="hero-top-badge">
-                      <Sparkles size={14} color="#b80039" />
+                      <Sparkles size={14} color="#ad1457" />
                       <span>{slide.badge}</span>
                     </div>
                     <h1 className="hero-title">{slide.title}</h1>
@@ -1892,6 +1948,24 @@ export default function App() {
                     />
                   ))}
                 </div>
+                <button
+                  type="button"
+                  className="hero-nav-btn hero-prev-btn"
+                  data-testid="hero-prev-btn"
+                  aria-label="Slide trước"
+                  onClick={() => setHeroSlide(prev => (prev - 1 + HERO_SLIDES.length) % HERO_SLIDES.length)}
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  className="hero-nav-btn hero-next-btn"
+                  data-testid="hero-next-btn"
+                  aria-label="Slide sau"
+                  onClick={() => setHeroSlide(prev => (prev + 1) % HERO_SLIDES.length)}
+                >
+                  ›
+                </button>
               </section>
 
               {/* Dải tin cậy — 4 ý ngắn */}
@@ -1900,6 +1974,35 @@ export default function App() {
                 <span><Truck size={16} /> Freeship đơn từ 299K</span>
                 <span><RotateCcw size={16} /> Đổi trả 30 ngày</span>
                 <span><CreditCard size={16} /> PayOS &amp; COD</span>
+              </section>
+
+              {/* Hàng icon danh mục mỹ phẩm (kiểu Cocolux) — ngay dưới banner */}
+              <section className="category-icon-row" data-testid="category-icon-row" aria-label="Danh mục mỹ phẩm">
+                {COSMETIC_ICON_CATEGORIES.map(item => {
+                  const matched = categories.find(c => c.slug === item.slug);
+                  return (
+                    <button
+                      key={item.slug}
+                      type="button"
+                      className="category-icon-btn"
+                      data-testid={`category-icon-${item.slug}`}
+                      onClick={() => goToCosmeticCategory(item.slug)}
+                    >
+                      <span className="category-icon-emoji" aria-hidden="true">{item.icon}</span>
+                      <span>{matched?.name ?? item.label}</span>
+                    </button>
+                  );
+                })}
+              </section>
+
+              {/* Dải thương hiệu mỹ phẩm nổi bật */}
+              <section className="brand-strip" data-testid="brand-strip" aria-label="Thương hiệu nổi bật">
+                <span className="brand-strip-label">Thương hiệu nổi bật</span>
+                <ul className="brand-strip-list">
+                  {FEATURED_BRANDS.map(brand => (
+                    <li key={brand} className="brand-strip-item">{brand}</li>
+                  ))}
+                </ul>
               </section>
 
               {/* Categories Filter Bar */}
@@ -2077,6 +2180,32 @@ export default function App() {
                 </section>
               </div>
 
+              {/* Bán chạy + Gợi ý cho bạn — chỉ khi xem tất cả sản phẩm */}
+              {selectedCategory === null && products.length > 0 && (
+                <>
+                  <section className="best-seller-section" data-testid="best-seller-section" aria-label="Bán chạy">
+                    <div className="shop-strip-header">
+                      <h2>Bán chạy</h2>
+                      <span>Được mua nhiều nhất tuần này</span>
+                    </div>
+                    <div className="products-grid">
+                      {bestSellerProducts.map(product => renderSectionCard(product, '-best'))}
+                    </div>
+                  </section>
+                  {suggestedProducts.length > 0 && (
+                    <section className="suggested-section" data-testid="suggested-section" aria-label="Gợi ý cho bạn">
+                      <div className="shop-strip-header">
+                        <h2>Gợi ý cho bạn</h2>
+                        <span>Có thể bạn sẽ thích</span>
+                      </div>
+                      <div className="products-grid">
+                        {suggestedProducts.map(product => renderSectionCard(product, '-suggest'))}
+                      </div>
+                    </section>
+                  )}
+                </>
+              )}
+
               {/* Gian hàng mỹ phẩm nổi bật */}
               <section className="shop-strip" aria-label="Gian hàng nổi bật">
                 <div className="shop-strip-header">
@@ -2091,7 +2220,8 @@ export default function App() {
                       className="shop-card"
                       data-testid={`shop-card-${shop.slug}`}
                       onClick={() => {
-                        setSelectedCategory('cat-9');
+                        // Gian hàng nổi bật → hiện tất cả mỹ phẩm (bỏ lọc danh mục).
+                        setSelectedCategory(null);
                         document.getElementById('products-section')?.scrollIntoView({ behavior: 'smooth' });
                       }}
                     >
@@ -2156,7 +2286,7 @@ export default function App() {
                       onClick={() => navigateTo('profile')}
                       style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}
                     >
-                      <MapPin size={15} color="#e40046" /> Sổ địa chỉ giao hàng
+                      <MapPin size={15} color="#d81b60" /> Sổ địa chỉ giao hàng
                     </button>
                   </div>
                 </div>
@@ -2208,7 +2338,7 @@ export default function App() {
                     <Package size={56} style={{ margin: '0 auto 14px', opacity: 0.3, color: 'var(--text-muted)' }} />
                     <h3 style={{ fontSize: '1.2rem', marginBottom: 8 }}>Bạn chưa có đơn hàng nào</h3>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 20 }}>
-                      Khám phá deal mỹ phẩm nổi bật trên GlowMart!
+                      Khám phá deal mỹ phẩm nổi bật trên DAFL!
                     </p>
                     <button type="button" className="btn btn-primary" onClick={() => navigateTo('home')}>
                       <ShoppingBag size={16} /> Mua sắm ngay
@@ -2268,7 +2398,7 @@ export default function App() {
 
                             <div className="order-footer-actions">
                               <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                Tổng giá trị đơn: <strong style={{ color: '#e40046', fontSize: '1.15rem' }}>{formatPrice(order.totalAmount)}</strong>
+                                Tổng giá trị đơn: <strong style={{ color: '#d81b60', fontSize: '1.15rem' }}>{formatPrice(order.totalAmount)}</strong>
                               </div>
                               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                 {label === 'Chờ thanh toán' && (
@@ -2521,7 +2651,7 @@ export default function App() {
                         </div>
                       )}
                       {cancelError && (
-                        <div style={{ color: '#e40046', fontSize: '0.85rem', marginBottom: 12 }}>{cancelError}</div>
+                        <div style={{ color: '#d81b60', fontSize: '0.85rem', marginBottom: 12 }}>{cancelError}</div>
                       )}
                       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
                         <button
@@ -2637,10 +2767,10 @@ export default function App() {
                             setProfileSuccess(false);
                           }}
                           placeholder="Nguyễn Văn A"
-                          style={profileNameError ? { borderColor: '#e40046' } : {}}
+                          style={profileNameError ? { borderColor: '#d81b60' } : {}}
                         />
                         {profileNameError && (
-                          <div data-testid="profile-name-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                          <div data-testid="profile-name-error" style={{ color: '#d81b60', fontSize: '0.8rem', marginTop: 6 }}>
                             {profileNameError}
                           </div>
                         )}
@@ -2659,10 +2789,10 @@ export default function App() {
                             setProfileSuccess(false);
                           }}
                           placeholder="0987654321"
-                          style={profilePhoneError ? { borderColor: '#e40046' } : {}}
+                          style={profilePhoneError ? { borderColor: '#d81b60' } : {}}
                         />
                         {profilePhoneError && (
-                          <div data-testid="profile-phone-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                          <div data-testid="profile-phone-error" style={{ color: '#d81b60', fontSize: '0.8rem', marginTop: 6 }}>
                             {profilePhoneError}
                           </div>
                         )}
@@ -2728,10 +2858,10 @@ export default function App() {
                             setCpErrors(prev => ({ ...prev, current: undefined }));
                             setCpSuccess(false);
                           }}
-                          style={cpErrors.current ? { borderColor: '#e40046' } : {}}
+                          style={cpErrors.current ? { borderColor: '#d81b60' } : {}}
                         />
                         {cpErrors.current && (
-                          <div data-testid="change-password-current-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                          <div data-testid="change-password-current-error" style={{ color: '#d81b60', fontSize: '0.8rem', marginTop: 6 }}>
                             {cpErrors.current}
                           </div>
                         )}
@@ -2751,11 +2881,11 @@ export default function App() {
                               setCpSuccess(false);
                             }}
                             placeholder="Tối thiểu 8 ký tự, gồm chữ hoa & ký tự đặc biệt"
-                            style={cpErrors.next ? { borderColor: '#e40046' } : {}}
+                            style={cpErrors.next ? { borderColor: '#d81b60' } : {}}
                           />
                           <PasswordRuleList password={cpNew} testIdPrefix="change-password" />
                           {cpErrors.next && (
-                            <div data-testid="change-password-new-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                            <div data-testid="change-password-new-error" style={{ color: '#d81b60', fontSize: '0.8rem', marginTop: 6 }}>
                               {cpErrors.next}
                             </div>
                           )}
@@ -2774,10 +2904,10 @@ export default function App() {
                               setCpSuccess(false);
                             }}
                             placeholder="Nhập lại mật khẩu mới để xác nhận"
-                            style={cpErrors.confirm ? { borderColor: '#e40046' } : {}}
+                            style={cpErrors.confirm ? { borderColor: '#d81b60' } : {}}
                           />
                           {cpErrors.confirm && (
-                            <div data-testid="change-password-confirm-error" style={{ color: '#e40046', fontSize: '0.8rem', marginTop: 6 }}>
+                            <div data-testid="change-password-confirm-error" style={{ color: '#d81b60', fontSize: '0.8rem', marginTop: 6 }}>
                               {cpErrors.confirm}
                             </div>
                           )}
@@ -2852,7 +2982,7 @@ export default function App() {
                         </div>
                       </div>
                       {setPasswordError && (
-                        <div data-testid="set-password-error" style={{ color: '#e40046', fontSize: '0.82rem', marginTop: 8 }}>
+                        <div data-testid="set-password-error" style={{ color: '#d81b60', fontSize: '0.82rem', marginTop: 8 }}>
                           {setPasswordError}
                         </div>
                       )}
@@ -2947,7 +3077,7 @@ export default function App() {
                             <Clock size={14} color="#6366f1" /> Đổi trả trong 7 ngày
                           </div>
                           <div className="product-trust-badge">
-                            <ShieldCheck size={14} color="#e40046" /> Bảo hành 12 tháng
+                            <ShieldCheck size={14} color="#d81b60" /> Bảo hành 12 tháng
                           </div>
                           <div className="product-trust-badge">
                             <Truck size={14} color="#f59e0b" /> Giao hàng toàn quốc
@@ -2959,7 +3089,7 @@ export default function App() {
                         <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: 8, color: 'var(--text-main)' }}>{selectedProduct.name}</h2>
 
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
-                          <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#e40046' }}>
+                          <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#d81b60' }}>
                             {formatPrice(selectedProduct.price)}
                           </span>
                           {selectedProduct.originalPrice && (
@@ -2968,7 +3098,7 @@ export default function App() {
                             </span>
                           )}
                           {selectedProduct.originalPrice && selectedProduct.originalPrice > selectedProduct.price && (
-                            <span style={{ fontSize: '0.8rem', background: 'rgba(228, 0, 70, 0.1)', color: '#e40046', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
+                            <span style={{ fontSize: '0.8rem', background: 'rgba(228, 0, 70, 0.1)', color: '#d81b60', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
                               Tiết kiệm {formatPrice(selectedProduct.originalPrice - selectedProduct.price)}
                             </span>
                           )}
@@ -3137,7 +3267,7 @@ export default function App() {
 
                           <div className="detail-section" style={{ marginBottom: 10 }}>
                             <h4 className="detail-section-title">
-                              <Truck size={18} color="var(--primary)" /> Chính sách bán hàng & Dịch vụ khách hàng GlowMart
+                              <Truck size={18} color="var(--primary)" /> Chính sách bán hàng & Dịch vụ khách hàng DAFL
                             </h4>
                             <div className="guarantees-grid">
                               {extra.guarantees.map((g, idx) => (
@@ -3302,7 +3432,7 @@ export default function App() {
                             <strong style={{ fontSize: '1.1rem' }}>{order?.orderDisplayCode || `#${orderCodeNum}`}</strong>
                             <span style={{ margin: '0 8px', color: 'var(--border-subtle)' }}>|</span>
                             <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)' }}>Tổng thanh toán: </span>
-                            <strong style={{ color: '#e40046', fontSize: '1.25rem' }}>{formatPrice(totalAmt)}</strong>
+                            <strong style={{ color: '#d81b60', fontSize: '1.25rem' }}>{formatPrice(totalAmt)}</strong>
                           </div>
                           <button
                             type="button"

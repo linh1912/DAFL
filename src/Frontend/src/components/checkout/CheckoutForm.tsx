@@ -58,7 +58,7 @@ interface ShippingFieldErrors {
   note?: string;
 }
 
-const ERROR_COLOR = '#e40046';
+const ERROR_COLOR = '#d81b60';
 const fieldErrorStyle: React.CSSProperties = { color: ERROR_COLOR, fontSize: '0.8rem', marginTop: 6 };
 
 const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());

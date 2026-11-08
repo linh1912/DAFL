@@ -20,7 +20,7 @@ const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.
 
 const isValidVietnamesePhone = (phone: string) => /^0\d{9}$/.test(phone.trim());
 
-const ERROR_COLOR = '#e40046';
+const ERROR_COLOR = '#d81b60';
 const SUCCESS_GREEN = '#16a34a';
 
 const fieldErrorStyle: React.CSSProperties = { color: ERROR_COLOR, fontSize: '0.8rem', marginTop: 6 };
@@ -416,7 +416,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       {!isModal && (
         <aside className="auth-side-panel" aria-hidden="true">
           <div className="auth-side-logo">D</div>
-          <div className="auth-side-name">GlowMart</div>
+          <div className="auth-side-name">DAFL</div>
         </aside>
       )}
       <div className={isModal ? undefined : 'auth-main-panel'}>
@@ -506,7 +506,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             data-testid="auth-error-msg"
             style={{
               background: 'rgba(228, 0, 70, 0.08)',
-              border: '1px solid #e40046',
+              border: '1px solid #d81b60',
               color: '#b91c1c',
               padding: '10px 14px',
               borderRadius: 8,

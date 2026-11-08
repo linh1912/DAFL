@@ -44,7 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   return (
     <>
-      <div className="dafl-topbar" aria-label="Ưu đãi GlowMart">
+      <div className="dafl-topbar" aria-label="Ưu đãi DAFL">
         <span>MIỄN PHÍ VẬN CHUYỂN CHO ĐƠN TỪ 299.000Đ</span>
         <span>ĐỔI TRẢ TRONG 30 NGÀY</span>
         <span>HÀNG CHÍNH HÃNG 100%</span>
@@ -56,9 +56,9 @@ export const Header: React.FC<HeaderProps> = ({
         className="brand"
         data-testid="brand-logo"
       >
-        <span className="brand-mark">G</span>
+        <span className="brand-mark">D</span>
         <span className="brand-name">
-          GlowMart
+          DAFL
           <small>SÀN MỸ PHẨM ĐA GIAN HÀNG</small>
         </span>
       </a>
@@ -89,7 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Header Actions */}
       <div className="header-actions">
-        <nav className="header-utilities" aria-label="Tiện ích GlowMart">
+        <nav className="header-utilities" aria-label="Tiện ích DAFL">
           <button type="button" className="header-utility" onClick={() => onNavigate('home')}>
             <Store size={20} />
             <span>Gian hàng</span>
@@ -111,7 +111,7 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <div className="theme-toggle-switch">
             <div className="theme-toggle-knob">
-              {theme === 'dark' ? <Moon size={10} color="#1f2937" /> : <Sun size={10} color="#e40046" />}
+              {theme === 'dark' ? <Moon size={10} color="#1f2937" /> : <Sun size={10} color="#d81b60" />}
             </div>
           </div>
           <span>{theme === 'dark' ? 'Theme Tối' : 'Theme Sáng'}</span>
@@ -151,7 +151,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {user ? user.fullName : 'Khách hàng'}
                 </div>
                 <div className="dropdown-user-role">
-                  {user ? (user.role === 'Admin' ? 'Quản trị viên' : 'Thành viên GlowMart') : 'Chưa đăng nhập'}
+                  {user ? (user.role === 'Admin' ? 'Quản trị viên' : 'Thành viên DAFL') : 'Chưa đăng nhập'}
                 </div>
               </div>
 

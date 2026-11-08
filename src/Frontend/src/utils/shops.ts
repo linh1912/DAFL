@@ -2,54 +2,60 @@ import { Product } from '../types';
 
 /**
  * Tên gian hàng hiển thị trên card sản phẩm (UI-only, chưa có entity Shop ở BE).
- * Suy ra ổn định từ id sản phẩm để cùng 1 sản phẩm luôn hiện cùng 1 shop.
+ * Thương hiệu thật parse từ tên sản phẩm — 25 thương hiệu có trong 64 SP seed
+ * của BE (DbInitializer.SeedProductTemplates). Thương hiệu dài đứng trước để
+ * so khớp dài nhất thắng (vd "La Roche-Posay" trước "3CE").
+ * Sản phẩm không chứa thương hiệu nào → "DAFL Official".
  * Khi BE có bảng Shop thì thay bằng product.shopName thật.
  */
 export const BEAUTY_SHOPS = [
-  'Glow Official',
-  'Lumière Beauty',
-  'PureSkin Lab',
-  'Rose Botanica',
-  'Mira Cosmetics',
-  'Aura Beauty',
+  'La Roche-Posay',
+  'Narciso Rodriguez',
+  'Real Techniques',
+  'Beauty Blender',
+  'The Ordinary',
+  "L'Oréal",
+  'Maybelline',
+  'Innisfree',
+  'Laneige',
+  'Peripera',
+  'Vaseline',
+  'Bioderma',
+  'Eucerin',
+  'Cosrx',
+  'Chanel',
+  'Versace',
+  'Cocoon',
+  'CeraVe',
+  'Anessa',
+  'Foreo',
+  'Rom&nd',
+  'Clio',
+  'Dior',
+  '3CE',
+  'Lancôme',
 ] as const;
 
-export const shopNameFor = (product: Pick<Product, 'id' | 'categoryId'>): string => {
-  // Danh mục mỹ phẩm luôn gắn shop chính hãng của sàn.
-  if (product.categoryId === 'cat-9') return 'Glow Official';
-  let hash = 0;
-  for (let i = 0; i < product.id.length; i++) hash = (hash * 31 + product.id.charCodeAt(i)) >>> 0;
-  return BEAUTY_SHOPS[hash % BEAUTY_SHOPS.length];
+export const shopNameFor = (product: Pick<Product, 'id' | 'categoryId' | 'name'>): string => {
+  const name = product.name ?? '';
+  for (const brand of BEAUTY_SHOPS) {
+    if (name.includes(brand)) return brand;
+  }
+  return 'DAFL Official';
 };
 
-/** Rút gọn tên danh mục dài của BE để hiển thị rõ ràng, ít chữ. */
+/** Rút gọn tên danh mục mỹ phẩm của BE để hiển thị rõ ràng, ít chữ. */
 const SHORT_CATEGORY_NAMES: Record<string, string> = {
-  'Đồ gia dụng & Đời sống': 'Gia dụng',
-  'Đồ ăn khô & Thực phẩm chế biến': 'Ăn vặt',
-  'Quần áo & Thời trang nam nữ': 'Thời trang',
-  'Trang sức & Phụ kiện cao cấp': 'Trang sức',
-  'Cà phê nguyên chất & Dụng cụ pha chế': 'Cà phê',
-  'Cá cảnh, Bể thủy sinh & Phụ kiện': 'Cá cảnh',
-  'Thiết bị điện tử & Phụ kiện công nghệ': 'Điện tử',
-  'Máy tính & Thiết bị văn phòng': 'Máy tính',
-  'Mỹ phẩm & Chăm sóc sắc đẹp': 'Mỹ phẩm',
-  'Mẹ & Bé (Sữa, tã bỉm, đồ chơi)': 'Mẹ & Bé',
-  'Sách & Văn phòng phẩm': 'Sách',
-  'Dụng cụ thể thao & Dã ngoại': 'Thể thao',
-  'Giày dép & Túi xách thời trang': 'Giày & Túi',
-  'Phụ kiện ô tô & Xe máy': 'Ô tô & Xe máy',
-  'Nội thất & Trang trí không gian sống': 'Nội thất',
-  'Thiết bị âm thanh & Nhạc cụ': 'Âm thanh',
-  'Trà & Đồ uống thảo mộc': 'Trà',
-  'Thực phẩm chức năng & Sức khỏe': 'Sức khỏe',
-  'Đồ chơi & Mô hình sưu tầm': 'Đồ chơi',
-  'Thú cưng & Phụ kiện chăm sóc': 'Thú cưng',
-  'Cây cảnh & Làm vườn tại gia': 'Cây cảnh',
-  'Đồ thủ công mỹ nghệ & Quà tặng': 'Quà tặng',
-  'Đồng hồ thời trang & Smartwatch': 'Đồng hồ',
-  'Dụng cụ làm bánh & Đồ bếp chuyên sâu': 'Đồ bếp',
-  'Hành lý & Đồ du lịch': 'Du lịch',
-  'Thiết bị nhà thông minh (Smart Home)': 'Smart Home',
+  'Son môi': 'Son môi',
+  'Chăm sóc da': 'Skincare',
+  'Trang điểm': 'Make up',
+  'Nước hoa': 'Nước hoa',
+  'Chăm sóc cơ thể': 'Bodycare',
+  'Chăm sóc tóc': 'Chăm sóc tóc',
+  'Mặt nạ': 'Mặt nạ',
+  'Dụng cụ làm đẹp': 'Dụng cụ',
+  'Chống nắng': 'Chống nắng',
+  'Tẩy trang & Làm sạch': 'Tẩy trang',
 };
 
 export const shortCategoryName = (name: string): string => {

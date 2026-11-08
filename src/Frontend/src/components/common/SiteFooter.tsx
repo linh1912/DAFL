@@ -25,7 +25,7 @@ export const SiteFooter: React.FC = () => {
         </div>
         {newsletterDone ? (
           <p className="newsletter-success">
-            <CheckCircle2 size={19} /> Cảm ơn bạn đã đăng ký nhận bản tin GlowMart.
+            <CheckCircle2 size={19} /> Cảm ơn bạn đã đăng ký nhận bản tin DAFL.
           </p>
         ) : (
           <form className="newsletter-form" onSubmit={handleNewsletterSubmit} noValidate>
@@ -50,17 +50,17 @@ export const SiteFooter: React.FC = () => {
 
       <footer className="site-footer">
         <div className="site-footer-brand">
-          <div className="site-footer-logo">GlowMart</div>
+          <div className="site-footer-logo">DAFL</div>
           <p>Mỹ phẩm chính hãng từ nhiều gian hàng, giá rõ ràng.</p>
           <p className="site-footer-contact">
             <Phone size={14} /> Hotline 1900 0000 (8h–21h)
           </p>
           <p className="site-footer-contact">
-            <MapPin size={14} /> Gian hàng GlowMart trên toàn quốc
+            <MapPin size={14} /> Gian hàng DAFL trên toàn quốc
           </p>
         </div>
 
-        <nav aria-label="Mua sắm tại GlowMart">
+        <nav aria-label="Mua sắm tại DAFL">
           <h3>Mua sắm</h3>
           <ul>
             <li>Chăm sóc da</li>
@@ -71,7 +71,7 @@ export const SiteFooter: React.FC = () => {
           </ul>
         </nav>
 
-        <nav aria-label="Hỗ trợ khách hàng GlowMart">
+        <nav aria-label="Hỗ trợ khách hàng DAFL">
           <h3>Hỗ trợ khách hàng</h3>
           <ul>
             <li>Hướng dẫn mua hàng</li>
@@ -82,20 +82,20 @@ export const SiteFooter: React.FC = () => {
           </ul>
         </nav>
 
-        <nav aria-label="Về GlowMart">
-          <h3>Về GlowMart</h3>
+        <nav aria-label="Về DAFL">
+          <h3>Về DAFL</h3>
           <ul>
             <li>Giới thiệu</li>
             <li>Gian hàng</li>
             <li>Tạp chí làm đẹp</li>
-            <li>GlowMart Member</li>
+            <li>DAFL Member</li>
             <li>Liên hệ</li>
           </ul>
         </nav>
       </footer>
 
       <div className="footer-bottom">
-        <span>© 2026 GlowMart. Bảo lưu mọi quyền.</span>
+        <span>© 2026 DAFL. Bảo lưu mọi quyền.</span>
         <span className="footer-payments">
           <CreditCard size={15} /> Thanh toán: PayOS · COD · Visa · Mastercard
         </span>

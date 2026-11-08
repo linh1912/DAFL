@@ -257,7 +257,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 10, borderTop: '1px solid var(--border-subtle)', fontSize: '1.2rem', fontWeight: 800 }}>
                     <span>Tổng thanh toán:</span>
-                    <span style={{ color: '#e40046' }} data-testid="cart-final-total">{formatPrice(finalTotal)}</span>
+                    <span style={{ color: '#d81b60' }} data-testid="cart-final-total">{formatPrice(finalTotal)}</span>
                   </div>
                 </div>
 
@@ -349,7 +349,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             </strong>
           </p>
           <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>
-            Tổng thanh toán: <strong style={{ color: '#e40046', fontSize: '1.1rem' }}>{formatPrice(checkoutResult.totalAmount)}</strong>
+            Tổng thanh toán: <strong style={{ color: '#d81b60', fontSize: '1.1rem' }}>{formatPrice(checkoutResult.totalAmount)}</strong>
             {' '}— thanh toán khi nhận hàng (COD).
           </p>
           <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>
@@ -416,7 +416,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <div className="payos-summary-bar">
                 <div>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Số tiền thanh toán: </span>
-                  <strong style={{ color: '#e40046', fontSize: '1.2rem' }} data-testid="payment-total-amount">
+                  <strong style={{ color: '#d81b60', fontSize: '1.2rem' }} data-testid="payment-total-amount">
                     {formatPrice(checkoutResult.totalAmount)}
                   </strong>
                 </div>

@@ -58,7 +58,7 @@ describe('App Routing & Navigation System (React Router)', () => {
 
     expect(screen.getByTestId('header')).toBeInTheDocument();
     expect(screen.getByTestId('brand-logo')).toBeInTheDocument();
-    expect(screen.getByText(/GlowMart — Sàn mỹ phẩm đa gian hàng/i)).toBeInTheDocument();
+    expect(screen.getByText(/DAFL — Mỹ phẩm chính hãng/i)).toBeInTheDocument();
   });
 
   it('renders Cart & Checkout view on "/cart"', async () => {
