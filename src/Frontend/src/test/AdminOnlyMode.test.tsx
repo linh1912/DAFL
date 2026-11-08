@@ -95,7 +95,7 @@ describe('Admin-only mode (VITE_ADMIN_ONLY=true)', () => {
     expect(screen.queryByTestId('hero-carousel')).not.toBeInTheDocument();
   });
 
-  it('admin-only /login: chỉ form cơ bản, không social, không tab đăng ký, có gợi ý tài khoản mặc định', async () => {
+  it('admin-only /login: chỉ form cơ bản, không social, không tab đăng ký, không gợi ý tài khoản, không tự điền mật khẩu cũ', async () => {
     const { default: App } = await import('../App');
     render(
       <MemoryRouter initialEntries={['/login']}>
@@ -111,7 +111,9 @@ describe('Admin-only mode (VITE_ADMIN_ONLY=true)', () => {
     expect(screen.queryByTestId('auth-tab-register')).not.toBeInTheDocument();
     expect(screen.queryByTestId('register-form')).not.toBeInTheDocument();
     expect(screen.getByText('Tên đăng nhập hoặc email')).toBeInTheDocument();
-    expect(screen.getByText('Tài khoản mặc định: admin / Admin@123')).toBeInTheDocument();
+    expect(screen.queryByText('Tài khoản mặc định: admin / Admin@123')).not.toBeInTheDocument();
+    expect(screen.getByTestId('login-password-input')).toHaveAttribute('autoComplete', 'new-password');
+    expect(screen.getByTestId('login-email-input')).toHaveAttribute('autoComplete', 'off');
   });
 
   it('admin-only /login: nhập "admin" được map sang admin@dafl.vn khi gọi API đăng nhập', async () => {

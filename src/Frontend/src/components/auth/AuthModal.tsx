@@ -404,6 +404,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 id="login-email"
                 className="form-input"
                 type="email"
+                autoComplete={adminOnly ? 'off' : 'username'}
                 data-testid="login-email-input"
                 value={loginEmail}
                 onChange={e => handleLoginEmailChange(e.target.value)}
@@ -423,6 +424,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   id="login-password"
                   className="form-input"
                   type={showLoginPassword ? 'text' : 'password'}
+                  autoComplete={adminOnly ? 'new-password' : 'current-password'}
                   data-testid="login-password-input"
                   value={loginPassword}
                   onChange={e => handleLoginPasswordChange(e.target.value)}
@@ -468,11 +470,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             >
               {authLoading ? 'Đang xử lý...' : 'Đăng nhập'}
             </button>
-            {adminOnly && (
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 12, textAlign: 'center' }}>
-                Tài khoản mặc định: admin / Admin@123
-              </p>
-            )}
           </form>
         ) : (
           <form onSubmit={handleRegisterSubmit} noValidate data-testid="register-form">
