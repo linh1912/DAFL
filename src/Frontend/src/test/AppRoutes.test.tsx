@@ -58,7 +58,7 @@ describe('App Routing & Navigation System (React Router)', () => {
 
     expect(screen.getByTestId('header')).toBeInTheDocument();
     expect(screen.getByTestId('brand-logo')).toBeInTheDocument();
-    expect(screen.getByText(/DAFL — Mỹ phẩm chính hãng/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Mỹ phẩm chính hãng/i })).toBeInTheDocument();
   });
 
   it('renders Cart & Checkout view on "/cart"', async () => {
@@ -325,7 +325,7 @@ describe('App Routing & Navigation System (React Router)', () => {
     expect(await screen.findByTestId('cart-badge-count')).toHaveTextContent('1');
   });
 
-  it('hero đợt 4: banner đủ 3 slide, chữ tiêu đề hiện trong hộp tối mờ, ảnh hiện trọn (contain)', async () => {
+  it('hero đợt cuối: banner đủ 3 slide, tiêu đề ngắn 1 dòng trong hộp nhỏ, ảnh ngang phủ kín (cover)', async () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <App />
@@ -342,13 +342,20 @@ describe('App Routing & Navigation System (React Router)', () => {
     }
     expect(screen.getByTestId('hero-prev-btn')).toBeInTheDocument();
     expect(screen.getByTestId('hero-next-btn')).toBeInTheDocument();
-    expect(screen.getByText(/DAFL — Mỹ phẩm chính hãng/i)).toBeInTheDocument();
-    expect(screen.getByText(/Mua mỹ phẩm, freeship tận nhà/i)).toBeInTheDocument();
-    expect(screen.getByText(/Tích điểm mỗi đơn, lên hạng nhận ưu đãi/i)).toBeInTheDocument();
-    // Chữ nằm trong hộp tối mờ (class hero-text-box) — không bị ảnh che.
+    // Tiêu đề slide 1 (đang hiện) là h1 đọc được; slide 2/3 đang aria-hidden
+    // nên kiểm tra qua testid của từng slide (getByRole không thấy phần tử ẩn).
+    expect(screen.getByRole('heading', { name: /Mỹ phẩm chính hãng/i })).toBeInTheDocument();
+    for (const [i, title] of [
+      [0, 'Mỹ phẩm chính hãng'],
+      [1, 'Freeship đơn từ 299K'],
+      [2, 'Tích điểm lên hạng'],
+    ] as const) {
+      expect(screen.getByTestId(`hero-slide-${i}`)).toHaveTextContent(title);
+    }
+    // Chữ nằm trong hộp nhỏ nền tối mờ nhẹ (class hero-text-box) — không bị ảnh che.
     const box = document.querySelector('.hero-text-box');
     expect(box).not.toBeNull();
-    expect(box).toHaveTextContent('DAFL — Mỹ phẩm chính hãng');
+    expect(box).toHaveTextContent('Mỹ phẩm chính hãng');
   });
 
   it('Flash Sale: có SP giảm giá thì hiện mục Flash Sale + đồng hồ đếm ngược HH:MM:SS', async () => {

@@ -99,6 +99,25 @@ services:
     networks:
       - dafl-network
 
+  # 6. Admin riêng: cùng code frontend, build với VITE_ADMIN_ONLY=true nên chỉ
+  # render trang quản trị (route / -> /admin), chạy ở localhost riêng 3001.
+  # API vẫn dùng chung backend qua nginx proxy /api như bản shop (không cần
+  # sửa gì thêm). Bật/tắt cổng bằng ADMIN_PORT trong .env (mặc định 3001).
+  admin:
+    build:
+      context: ./src/Frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_ADMIN_ONLY: "true"
+    container_name: dafl-admin
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_PORT:-3001}:80"
+    depends_on:
+      - backend
+    networks:
+      - dafl-network
+
 networks:
   dafl-network:
     driver: bridge

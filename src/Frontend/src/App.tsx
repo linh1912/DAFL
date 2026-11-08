@@ -48,6 +48,12 @@ import AdminPage from './components/admin/AdminPage';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
+/** Chế độ admin-riêng: build với VITE_ADMIN_ONLY=true thì app chỉ render trang
+ *  quản trị (không có shop, banner, giỏ hàng...), chạy ở localhost:3001 qua
+ *  service `dafl-admin` trong docker-compose.yml. Khi không bật, app chạy
+ *  như shop bình thường ở localhost:3000. */
+export const IS_ADMIN_ONLY = import.meta.env.VITE_ADMIN_ONLY === 'true';
+
 /** Phí ship hiện hành của app (O1): 25.000đ, miễn phí khi tạm tính (trước giảm) ≥ 299.000đ. */
 const SHIPPING_FEE = 25000;
 const FREE_SHIPPING_THRESHOLD = 299000;
@@ -57,29 +63,32 @@ const CATALOG_PAGE_SIZE = 12;
 const ORDERS_PAGE_SIZE = 10;
 
 /** Slide hero trang chủ DAFL — ít chữ, tự chạy 4s/slide, ảnh mỹ phẩm Unsplash.
- *  Ảnh hiện TRỌN (contain) trong banner 340px nằm trong container; chữ trong hộp tối mờ. */
-const HERO_FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=2000&q=80';
+ *  Cả 3 ảnh đều NGANG (đã kiểm chứng HTTP 200 + xem trực tiếp: son flat-lay
+ *  cắt 2:1, bảng trang điểm 1.53, dầu gội/xả 1.5) nên banner dùng
+ *  object-fit: cover để ảnh phủ kín, không còn khoảng hồng trống; chữ trong
+ *  hộp tối mờ nhẹ, tiêu đề ngắn gọn 1 dòng. */
+const HERO_FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&w=2000&h=1000&q=80';
 const HERO_SLIDES = [
   {
     badge: 'FLASH SALE • GIẢM ĐẾN 50%',
-    title: 'DAFL — Mỹ phẩm chính hãng',
+    title: 'Mỹ phẩm chính hãng',
     sub: 'Son, serum, kem chống nắng chính hãng từ nhiều shop.',
     cta: 'Mua ngay',
-    image: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&w=2000&q=80',
+    image: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&w=2000&h=1000&q=80',
   },
   {
     badge: 'FREESHIP ĐƠN TỪ 299K',
-    title: 'Mua mỹ phẩm, freeship tận nhà',
+    title: 'Freeship đơn từ 299K',
     sub: 'Giao nhanh 2–4 ngày, đổi trả trong 30 ngày.',
     cta: 'Xem deal freeship',
-    image: 'https://images.unsplash.com/photo-1571781926291-c477ebfd024b?auto=format&fit=crop&w=2000&q=80',
+    image: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=2000&q=80',
   },
   {
     badge: 'HỘI VIÊN DAFL',
-    title: 'Tích điểm mỗi đơn, lên hạng nhận ưu đãi',
+    title: 'Tích điểm lên hạng',
     sub: 'Thường • Bạc • Vàng • Kim cương.',
     cta: 'Khám phá hội viên',
-    image: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=2000&q=80',
+    image: 'https://images.unsplash.com/photo-1631729371254-42c2892f0e6e?auto=format&fit=crop&w=2000&q=80',
   },
 ];
 
@@ -193,6 +202,11 @@ export default function App() {
   useEffect(() => {
     pathnameRef.current = location.pathname;
   }, [location.pathname]);
+
+  // Chế độ admin-riêng: đổi title trang (index.html giữ title của shop).
+  useEffect(() => {
+    if (IS_ADMIN_ONLY) document.title = 'DAFL Admin — Quản trị';
+  }, []);
 
   // Navigation & Catalog (CN-04: phân trang server 12/trang + sort + khoảng giá)
   const [categories, setCategories] = useState<Category[]>([]);
@@ -1930,6 +1944,40 @@ export default function App() {
 
   const isStandalone = location.pathname.startsWith('/mock-payos') || location.pathname.startsWith('/payment-success');
 
+  // Chế độ admin-riêng (VITE_ADMIN_ONLY=true): chỉ render trang Admin (+ đăng
+  // nhập để AdminPage chuyển tới khi chưa đăng nhập), ẩn toàn bộ shop: header
+  // shop, banner, giỏ hàng, checkout, footer... Mọi hook/effect phía trên vẫn
+  // chạy như thường (đã gọi hết trước khi return nên không vi phạm rules-of-hooks);
+  // API vẫn dùng chung backend qua nginx proxy /api như bản shop.
+  if (IS_ADMIN_ONLY) {
+    return (
+      <div className="app-container admin-only-app" data-testid="admin-only-app">
+        <Routes>
+          <Route path="/admin" element={<AdminPage />} />
+          <Route
+            path="/login"
+            element={(
+              <AuthModal
+                {...commonAuthProps}
+                isOpen={true}
+                isModal={false}
+                onClose={handleAuthClose}
+                authTab="login"
+                setAuthTab={(tab) => {
+                  setAuthTab(tab);
+                  clearAuthErrors();
+                  navigateTo(tab);
+                }}
+              />
+            )}
+          />
+          <Route path="/" element={<Navigate to="/admin" replace />} />
+          <Route path="*" element={<Navigate to="/admin" replace />} />
+        </Routes>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       {/* Live Toast Notification Alert */}
@@ -1996,7 +2044,7 @@ export default function App() {
                     />
                     <div className="hero-text-box">
                       <div className="hero-top-badge">
-                        <Sparkles size={14} color="#ad1457" />
+                        <Sparkles size={14} color="#ffd900" />
                         <span>{slide.badge}</span>
                       </div>
                       <h1 className="hero-title">{slide.title}</h1>

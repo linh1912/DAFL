@@ -4342,7 +4342,11 @@ body { font-size: 1rem; line-height: 1.55; }
 /* --- Hero banner kiểu Cocolux: ảnh nền + nút prev/next ---
  *  Đợt 4: banner NẰM TRONG container (không tràn full màn hình nữa),
  *  ảnh HIỆN TRỌN bằng object-fit: contain (không cắt chủ thể),
- *  chữ đặt trong hộp nền tối mờ nên luôn đọc được. Cao 340px desktop, 240px mobile. */
+ *  chữ đặt trong hộp nền tối mờ nên luôn đọc được. Cao 340px desktop, 240px mobile.
+ *  Đợt cuối: ảnh dọc/vuông (Curology 0.67, son 1:1) làm contain để lại khoảng
+ *  hồng trống lớn + hộp chữ tối to che banner, nên đổi lại cover: cả 3 ảnh
+ *  giờ đều NGANG (son cắt 2:1, trang điểm 1.53, dầu gội 1.5, đã xem trực tiếp),
+ *  ảnh phủ kín banner, hộp chữ thu nhỏ + nền nhạt hơn, tiêu đề ngắn 1 dòng. */
 .hero-carousel { min-height: 340px; margin-left: 0; margin-right: 0; border-radius: 16px; }
 .hero-slide {
   padding: 28px 32px 56px;
@@ -4352,7 +4356,7 @@ body { font-size: 1rem; line-height: 1.55; }
   justify-content: center;
   align-items: flex-start;
 }
-.hero-carousel .hero-title { font-size: 2.2rem; line-height: 1.2; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+.hero-carousel .hero-title { font-size: 2rem; line-height: 1.25; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); white-space: nowrap; }
 .hero-carousel .hero-subtitle { font-size: 1.05rem; }
 .hero-dots { left: 32px; bottom: 18px; }
 @media (max-width: 640px) {
@@ -4370,18 +4374,18 @@ body { font-size: 1rem; line-height: 1.55; }
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   object-position: center;
   z-index: 0;
 }
-/* Hộp chữ nền tối mờ — chữ luôn đọc được dù ảnh sáng hay tối. */
+/* Hộp chữ nhỏ, nền tối mờ NHẸ — không còn khối tối to che banner. */
 .hero-text-box {
   position: relative;
   z-index: 2;
-  background: rgba(24, 4, 14, 0.55);
+  background: rgba(0, 0, 0, 0.35);
   border-radius: 14px;
-  padding: 20px 24px;
-  max-width: 560px;
+  padding: 18px 22px;
+  max-width: 480px;
 }
 .hero-text-box .hero-top-badge { background: rgba(255, 255, 255, 0.25); }
 .hero-text-box .hero-subtitle { margin-bottom: 16px; }
