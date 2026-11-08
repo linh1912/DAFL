@@ -30,7 +30,7 @@ export function getProductDetailExtra(product: {
     { label: 'Mã sản phẩm (SKU)', value: sku },
     { label: 'Danh mục', value: product.categoryName || 'Sản phẩm chọn lọc' },
     { label: 'Tình trạng', value: 'Mới 100% nguyên seal hộp' },
-    { label: 'Thương hiệu', value: 'Chính hãng DAFL Mall' },
+    { label: 'Thương hiệu', value: 'Chính hãng GlowMart Mall' },
   ];
 
   if (cat.includes('điện thoại') || cat.includes('máy tính') || cat.includes('laptop') || cat.includes('gaming') || cat.includes('thông minh') || cat.includes('camera') || cat.includes('điện gia dụng')) {

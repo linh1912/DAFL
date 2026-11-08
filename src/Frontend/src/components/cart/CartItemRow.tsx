@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Plus, Minus, Trash2 } from 'lucide-react';
 import { CartItem } from '../../types';
 import { formatPrice } from '../../utils/formatters';
+import { shopNameFor } from '../../utils/shops';
 
 export interface CartItemRowProps {
   item: CartItem;
@@ -63,14 +64,16 @@ export const CartItemRow: React.FC<CartItemRowProps> = ({
       <img
         src={item.product.imageUrl}
         alt={item.product.name}
-        style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover', marginRight: 12 }}
+        style={{ width: 64, height: 64, borderRadius: 10, objectFit: 'cover', marginRight: 12, flexShrink: 0 }}
       />
       <div className="cart-item-info">
         <div className="cart-item-name" data-testid={`cart-item-name-${productId}`}>
           {item.product.name}
         </div>
+        <div className="cart-item-shop">{shopNameFor(item.product)}</div>
         <div className="cart-item-price" data-testid={`cart-item-price-${productId}`}>
           {formatPrice(item.product.price)}
+          <span className="cart-item-line-total"> · {formatPrice(item.product.price * item.quantity)}</span>
         </div>
         {item.priceChanged && (
           <div className="cart-item-price-changed" data-testid={`cart-item-price-changed-${productId}`}>

@@ -16,9 +16,12 @@ public static class OrderStatusLabels
     {
         OrderStatus.Pending => paymentMethod == "PayOS" ? "Chờ thanh toán" : "Chờ xác nhận",
         OrderStatus.Paid => "Chờ xác nhận",
+        OrderStatus.Confirmed => "Đã xác nhận",
         OrderStatus.Preparing => "Đang chuẩn bị",
         OrderStatus.Shipping => "Đang giao",
         OrderStatus.Delivered => "Đã giao",
+        OrderStatus.Completed => "Hoàn tất",
+        OrderStatus.ReturnRequested => "Yêu cầu trả hàng",
         OrderStatus.Cancelled => "Đã hủy",
         OrderStatus.Expired => "Đã hết hạn",
         _ => status.ToString()
@@ -55,7 +58,16 @@ public record OrderHistoryDto(
     string? ShipWardName = null,
     string? ShipDetailAddress = null,
     string? ShipNote = null,
-    Guid? AddressBookId = null
+    Guid? AddressBookId = null,
+    // Hội viên + vận đơn (tài liệu §5/§8): điểm đã dùng/đã nhận, mã vận đơn, mốc giao/hoàn tất
+    int PointsUsed = 0,
+    decimal PointsDiscount = 0,
+    int PointsEarned = 0,
+    string? FreeShipVoucherCode = null,
+    string? TrackingCode = null,
+    string? Carrier = null,
+    DateTime? DeliveredAt = null,
+    DateTime? CompletedAt = null
 );
 
 public record GetOrderHistoryQuery(
@@ -63,7 +75,13 @@ public record GetOrderHistoryQuery(
     string? Email,
     int? Page = null,
     int? PageSize = null,
-    string? Status = null) : IRequest<ApiResponse<List<OrderHistoryDto>>>;
+    string? Status = null,
+    // Lọc nâng cao (§8.1): tìm theo mã đơn/tên sản phẩm, khoảng ngày, khoảng tiền
+    string? Search = null,
+    DateTime? From = null,
+    DateTime? To = null,
+    decimal? MinTotal = null,
+    decimal? MaxTotal = null) : IRequest<ApiResponse<List<OrderHistoryDto>>>;
 
 public class GetOrderHistoryQueryHandler : IRequestHandler<GetOrderHistoryQuery, ApiResponse<List<OrderHistoryDto>>>
 {
@@ -111,11 +129,23 @@ public class GetOrderHistoryQueryHandler : IRequestHandler<GetOrderHistoryQuery,
             }
             else
             {
-                var labelMatch = new[] { OrderStatus.Preparing, OrderStatus.Shipping, OrderStatus.Delivered, OrderStatus.Cancelled, OrderStatus.Expired }
+                var labelMatch = new[] { OrderStatus.Confirmed, OrderStatus.Preparing, OrderStatus.Shipping, OrderStatus.Delivered, OrderStatus.Completed, OrderStatus.ReturnRequested, OrderStatus.Cancelled, OrderStatus.Expired }
                     .FirstOrDefault(s => OrderStatusLabels.For(s, "COD") == statusFilter);
                 query = query.Where(o => o.Status == labelMatch);
             }
         }
+
+        // Lọc nâng cao (§8.1): tìm theo mã đơn/tên sản phẩm, khoảng ngày, khoảng tiền.
+        if (!string.IsNullOrWhiteSpace(request.Search))
+        {
+            var s = request.Search.Trim().ToLower();
+            query = query.Where(o => (o.OrderDisplayCode != null && o.OrderDisplayCode.ToLower().Contains(s))
+                || o.Items.Any(i => i.ProductName.ToLower().Contains(s)));
+        }
+        if (request.From.HasValue) query = query.Where(o => o.CreatedAt >= request.From.Value);
+        if (request.To.HasValue) query = query.Where(o => o.CreatedAt <= request.To.Value);
+        if (request.MinTotal.HasValue) query = query.Where(o => o.TotalAmount >= request.MinTotal.Value);
+        if (request.MaxTotal.HasValue) query = query.Where(o => o.TotalAmount <= request.MaxTotal.Value);
 
         query = query.OrderByDescending(o => o.CreatedAt);
 
@@ -161,7 +191,15 @@ public class GetOrderHistoryQueryHandler : IRequestHandler<GetOrderHistoryQuery,
                 o.ShipWardName,
                 o.ShipDetailAddress,
                 o.ShipNote,
-                o.AddressBookId
+                o.AddressBookId,
+                o.PointsUsed,
+                o.PointsDiscount,
+                o.PointsEarned,
+                o.FreeShipVoucherCode,
+                o.TrackingCode,
+                o.Carrier,
+                o.DeliveredAt,
+                o.CompletedAt
             ))
             .ToListAsync(cancellationToken);
 

@@ -1,6 +1,9 @@
 using DAFL.Backend.Common;
 using DAFL.Backend.Common.Behaviors;
+using DAFL.Backend.Features.Admin;
 using DAFL.Backend.Features.Auth;
+using DAFL.Backend.Features.Membership;
+using DAFL.Backend.Features.Promotions;
 using DAFL.Backend.Features.Addresses;
 using DAFL.Backend.Features.Cart;
 using DAFL.Backend.Features.Categories.GetCategories;
@@ -55,6 +58,9 @@ builder.Services.AddSwaggerGen(options =>
         if (api.RelativePath.StartsWith("api/vouchers")) return new[] { "Vouchers - Mã giảm giá" };
         if (api.RelativePath.StartsWith("api/orders")) return new[] { "Orders - Đơn hàng" };
         if (api.RelativePath.StartsWith("api/payments")) return new[] { "Payments - Thanh toán" };
+        if (api.RelativePath.StartsWith("api/admin")) return new[] { "Admin - Quản trị" };
+        if (api.RelativePath.StartsWith("api/membership")) return new[] { "Membership - Hội viên" };
+        if (api.RelativePath.StartsWith("api/promotions")) return new[] { "Promotions - Khuyến mãi" };
         return new[] { "Other" };
     });
 });
@@ -124,6 +130,8 @@ builder.Services.AddHostedService<KafkaConsumerWorker>();
 // 7. PayOS & Stock Reservation Background Worker
 builder.Services.AddScoped<IPayOSService, PayOSService>();
 builder.Services.AddHostedService<ReservationCleanupWorker>();
+// Bảo trì hội viên (§5.2/§5.3): hết hạn điểm 12 tháng + xét lại hạng hằng ngày.
+builder.Services.AddHostedService<MembershipMaintenanceWorker>();
 
 // 7b. JWT (CN-02): đăng nhập/đăng ký/social cấp JWT HS256 hạn 1 giờ, secret từ Jwt:Secret (env JWT_SECRET).
 // Theo CN, hệ thống KHÔNG còn OTP email → không còn SMTP/email sender trong bản này.
@@ -169,10 +177,32 @@ app.Use(async (context, next) =>
     if (authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
     {
         var jwtService = context.RequestServices.GetRequiredService<IJwtService>();
-        var userId = jwtService.ValidateToken(authorization["Bearer ".Length..].Trim());
+        var rawToken = authorization["Bearer ".Length..].Trim();
+        var userId = jwtService.ValidateToken(rawToken);
         if (userId.HasValue)
         {
             context.Items[HttpContextAuthExtensions.CurrentUserIdItemKey] = userId.Value;
+            var tokenVersion = jwtService.GetTokenVersion(rawToken);
+            if (tokenVersion.HasValue)
+            {
+                context.Items[HttpContextAuthExtensions.CurrentTokenVersionItemKey] = tokenVersion.Value;
+            }
+            // Vô hiệu JWT cũ sau khi đổi/đặt lại mật khẩu (TokenVersion tăng) và chặn tài khoản bị khóa.
+            // Lỗi DB ở đây không chặn request (endpoint cần DB sẽ tự báo lỗi) — chỉ fail-closed khi đọc được user.
+            try
+            {
+                var db = context.RequestServices.GetRequiredService<AppDbContext>();
+                var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId.Value);
+                if (user == null || user.IsLocked || (tokenVersion.HasValue && tokenVersion.Value != user.TokenVersion))
+                {
+                    context.Items.Remove(HttpContextAuthExtensions.CurrentUserIdItemKey);
+                    context.Items.Remove(HttpContextAuthExtensions.CurrentTokenVersionItemKey);
+                }
+            }
+            catch (Exception ex)
+            {
+                app.Logger.LogWarning(ex, "Auth middleware: could not verify TokenVersion/lock status for user {UserId}.", userId.Value);
+            }
         }
     }
     await next();
@@ -749,7 +779,7 @@ app.MapPost("/api/orders/checkout", async (CheckoutCommand command, HttpContext 
     + "→ xóa sản phẩm đã đặt khỏi giỏ server. Chống double-submit bằng Idempotency-Key. Cần JWT.")
 .WithTags("Orders - Đơn hàng");
 
-app.MapGet("/api/orders", async (int? page, int? pageSize, string? status, HttpContext httpContext, IMediator mediator) =>
+app.MapGet("/api/orders", async (int? page, int? pageSize, string? status, string? search, DateTime? from, DateTime? to, decimal? minTotal, decimal? maxTotal, HttpContext httpContext, IMediator mediator) =>
 {
     var userId = httpContext.GetCurrentUserId();
     if (!userId.HasValue)
@@ -757,7 +787,7 @@ app.MapGet("/api/orders", async (int? page, int? pageSize, string? status, HttpC
         return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để xem đơn hàng."), statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    var result = await mediator.Send(new GetOrderHistoryQuery(userId.Value, null, page, pageSize, status));
+    var result = await mediator.Send(new GetOrderHistoryQuery(userId.Value, null, page, pageSize, status, search, from, to, minTotal, maxTotal));
     return Results.Ok(result);
 })
 .WithName("ListMyOrders")
@@ -850,6 +880,717 @@ app.MapPost("/api/payments/payos-webhook", async (PayOSWebhookPayload payload, I
     + "⚠️ Endpoint này được gọi bởi PayOS server, không phải từ client.")
 .WithTags("Payments - Thanh toán");
 
+
+// ==========================================
+// MODULE 9: AUTH MỞ RỘNG — Quên / đặt lại mật khẩu (§9.1)
+// ==========================================
+
+app.MapPost("/api/auth/forgot-password", async (ForgotPasswordRequest request, IMediator mediator) =>
+{
+    var result = await mediator.Send(new ForgotPasswordCommand(request.Email));
+    return Results.Ok(result);
+})
+.WithName("ForgotPassword")
+.WithSummary("Quên mật khẩu — xin mã đặt lại (§9.1)")
+.WithDescription("Luôn trả cùng 1 câu dù email có tồn tại hay không (chống dò tài khoản). Mã 6 số băm trước khi lưu, hạn 15 phút, tối đa 5 lần nhập sai, tối đa 3 lần gửi/1 giờ. Lưu ý: fork chưa có SMTP nên mã chỉ ghi log ở Development — cần gắn SMTP trước khi dùng thật.")
+.WithTags("Auth - Xác thực");
+
+app.MapPost("/api/auth/reset-password", async (ResetPasswordRequest request, IMediator mediator) =>
+{
+    var result = await mediator.Send(new ResetPasswordCommand(request.Email, request.Code, request.NewPassword, request.ConfirmNewPassword));
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("ResetPassword")
+.WithSummary("Đặt lại mật khẩu bằng mã 6 số (§9.1)")
+.WithDescription("Mã đúng + còn hạn + mật khẩu mới đạt policy và khác mật khẩu cũ → đổi mật khẩu, hủy mã đã dùng, vô hiệu mọi JWT đang sống (TokenVersion tăng).")
+.WithTags("Auth - Xác thực");
+
+// ==========================================
+// MODULE 10: MEMBERSHIP — Hội viên (§5, §6, §7.6)
+// ==========================================
+
+app.MapGet("/api/membership/me", async (HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để xem hội viên."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new GetMembershipQuery(userId.Value));
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("GetMyMembership")
+.WithSummary("Hồ sơ hội viên của tôi: hạng, điểm, chi tiêu 12 tháng, hạng tiếp theo")
+.WithTags("Membership - Hội viên");
+
+app.MapGet("/api/membership/points", async (int? page, int? pageSize, HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để xem lịch sử điểm."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new GetPointLedgerQuery(userId.Value, page ?? 1, pageSize ?? 20));
+    return Results.Ok(result);
+})
+.WithName("GetMyPointLedger")
+.WithSummary("Sổ cái điểm: EARN/USE/REFUND/REVOKE/EXPIRED/ADMIN_ADJUST")
+.WithTags("Membership - Hội viên");
+
+app.MapGet("/api/membership/vouchers", async (HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để xem ưu đãi."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new GetMyVouchersQuery(userId.Value));
+    return Results.Ok(result);
+})
+.WithName("GetMyVouchers")
+.WithSummary("Ưu đãi của tôi: voucher công khai đúng hạng + voucher cá nhân (sinh nhật/chào hạng)")
+.WithTags("Membership - Hội viên");
+
+app.MapPut("/api/membership/preferences", async (MembershipPreferencesRequest request, HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để cập nhật hội viên."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new UpdateMembershipPreferencesCommand(userId.Value, request.BirthDate, request.DefaultPaymentMethod, request.AutoUsePoints));
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("UpdateMembershipPreferences")
+.WithSummary("Cập nhật ngày sinh / phương thức mặc định / tự dùng điểm (ngày sinh khóa sửa 90 ngày)")
+.WithTags("Membership - Hội viên");
+
+app.MapPost("/api/membership/birthday-voucher", async (HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để nhận voucher sinh nhật."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new ClaimBirthdayVoucherCommand(userId.Value));
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("ClaimBirthdayVoucher")
+.WithSummary("Nhận voucher sinh nhật (hạng Vàng trở lên, trong 30 ngày quanh ngày sinh, mỗi năm 1 lần)")
+.WithTags("Membership - Hội viên");
+
+app.MapPost("/api/membership/reorder/{orderId:guid}", async (Guid orderId, HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để mua lại."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new ReorderCommand(userId.Value, orderId));
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("Reorder")
+.WithSummary("Mua lại 1 chạm: cho sản phẩm còn bán + còn hàng vào giỏ, liệt kê riêng sản phẩm không mua được")
+.WithTags("Membership - Hội viên");
+
+// ==========================================
+// MODULE 11: PROMOTIONS — Kiểm tra voucher phía khách (§7.4/§7.5)
+// ==========================================
+
+app.MapPost("/api/promotions/validate", async (ValidateVoucherRequest request, HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    var items = request.Items?.Select(i => new ValidateVoucherItemDto(i.ProductId, i.CategoryId, i.LineTotal)).ToList()
+        ?? new List<ValidateVoucherItemDto>();
+    var result = await mediator.Send(new ValidateVoucherCommand(userId, request.GoodsVoucherCode, request.FreeShipVoucherCode, request.SubTotal, items));
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("ValidateVoucher")
+.WithSummary("Kiểm tra mã giảm giá (1 mã tiền hàng + 1 mã freeship) theo đúng 9 bước §7.5 — chỉ kiểm tra, không trừ lượt")
+.WithTags("Promotions - Khuyến mãi");
+
+app.MapGet("/api/promotions/mine", async (HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để xem ưu đãi."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new GetMyVouchersQuery(userId.Value));
+    return Results.Ok(result);
+})
+.WithName("GetMyPromotions")
+.WithSummary("Danh sách voucher tôi đang có (bí danh của /api/membership/vouchers)")
+.WithTags("Promotions - Khuyến mãi");
+
+// ==========================================
+// MODULE 12: ORDERS — Hành động của khách (§8.1, §9.2)
+// ==========================================
+
+app.MapPost("/api/orders/{id:guid}/confirm-received", async (Guid id, HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để xác nhận nhận hàng."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new ConfirmReceivedCommand(userId.Value, id));
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("ConfirmReceived")
+.WithSummary("Khách bấm Đã nhận hàng (Delivered → Completed): cộng điểm + xét hạng")
+.WithTags("Orders - Đơn hàng");
+
+app.MapPost("/api/orders/{id:guid}/returns", async (Guid id, CreateReturnRequestBody request, HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để yêu cầu trả hàng."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new CreateReturnRequestCommand(userId.Value, id, request.ProductId, request.Quantity, request.Reason, request.Note));
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("CreateReturnRequest")
+.WithSummary("Yêu cầu trả hàng trong 7 ngày từ Delivered (§9.2)")
+.WithTags("Orders - Đơn hàng");
+
+app.MapGet("/api/orders/{id:guid}/returns", async (Guid id, HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để xem yêu cầu trả hàng."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new ListReturnRequestsQuery(userId.Value, id, null, AdminView: false));
+    return Results.Ok(result);
+})
+.WithName("ListMyReturnRequests")
+.WithSummary("Yêu cầu trả hàng của 1 đơn (kèm trạng thái hoàn tiền)")
+.WithTags("Orders - Đơn hàng");
+
+app.MapGet("/api/orders/{id:guid}/invoice", async (Guid id, HttpContext httpContext, IMediator mediator) =>
+{
+    var userId = httpContext.GetCurrentUserId();
+    if (!userId.HasValue)
+    {
+        return Results.Json(ApiResponse<string>.Fail("Bạn cần đăng nhập để xem hóa đơn."), statusCode: StatusCodes.Status401Unauthorized);
+    }
+    var result = await mediator.Send(new GetInvoiceQuery(userId.Value, id));
+    if (result.Data == null)
+    {
+        return Results.NotFound(ApiResponse<string>.Fail("Không tìm thấy đơn hàng."));
+    }
+    return Results.Ok(result);
+})
+.WithName("GetOrderInvoice")
+.WithSummary("Dữ liệu hóa đơn từ snapshot lúc mua (chưa xuất PDF)")
+.WithTags("Orders - Đơn hàng");
+
+// ==========================================
+// MODULE 13: ADMIN — Quản trị (§1–§5, §7–§9)
+// Mọi endpoint /api/admin/* đều qua AdminGuard.RequireSuperAdminAsync (Role + TokenVersion + IsLocked).
+// ==========================================
+
+app.MapGet("/api/admin/profile", async (HttpContext httpContext, AppDbContext dbContext) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    return Results.Ok(ApiResponse<object>.Ok(new
+    {
+        admin!.Id, admin.Email, admin.FullName, admin.PhoneNumber, admin.Address,
+        admin.Role, admin.LastLoginAt, admin.CreatedAt,
+        EmailReadOnly = true // Email là định danh đăng nhập + nhận OTP — không sửa qua endpoint này (§2.1).
+    }));
+})
+.WithName("GetAdminProfile")
+.WithSummary("Hồ sơ Super Admin (email chỉ đọc)")
+.WithTags("Admin - Quản trị");
+
+app.MapPut("/api/admin/profile", async (UpdateProfileRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new UpdateProfileCommand(admin!.Id, request.FullName, request.PhoneNumber, request.Address));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin, "ADMIN_UPDATE_PROFILE", "User", admin.Id.ToString(),
+            new { admin.FullName, admin.PhoneNumber }, new { request.FullName, request.PhoneNumber },
+            AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("UpdateAdminProfile")
+.WithSummary("Sửa thông tin cá nhân admin: họ tên/SĐT (SĐT không trùng tài khoản khác); email không sửa được")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/change-password", async (ChangePasswordRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ChangePasswordCommand(admin!.Id, request.CurrentPassword, request.NewPassword, request.ConfirmNewPassword));
+    if (result.Success)
+    {
+        // TokenVersion đã tăng trong handler → mọi JWT cũ bị vô hiệu, admin phải đăng nhập lại.
+        // Gửi email cảnh báo: chưa có SMTP trong fork nên chỉ ghi log (xem ghi chú ở ForgotPassword).
+        app.Logger.LogWarning("Admin password changed for {Email}. All sessions invalidated.", admin.Email);
+        await AdminGuard.WriteAuditAsync(dbContext, admin, "ADMIN_CHANGE_PASSWORD", "User", admin.Id.ToString(),
+            null, new { ChangedAt = DateTime.UtcNow }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminChangePassword")
+.WithSummary("Đổi mật khẩu Super Admin: kiểm tra mật khẩu cũ + policy mới + khác mật khẩu cũ; JWT cũ bị hủy")
+.WithTags("Admin - Quản trị");
+
+app.MapGet("/api/admin/dashboard", async (HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new GetAdminDashboardQuery());
+    return Results.Ok(result);
+})
+.WithName("GetAdminDashboard")
+.WithSummary("Dashboard: doanh thu hôm nay/tháng, đơn theo trạng thái, sắp hết hàng, voucher sắp hết lượt")
+.WithTags("Admin - Quản trị");
+
+app.MapGet("/api/admin/reports/revenue", async (DateTime? from, DateTime? to, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new GetRevenueReportQuery(from, to));
+    return Results.Ok(result);
+})
+.WithName("GetAdminRevenueReport")
+.WithSummary("Báo cáo: doanh thu theo ngày, sản phẩm bán chạy, tỉ lệ hủy, tỉ lệ dùng voucher")
+.WithTags("Admin - Quản trị");
+
+// --- Sản phẩm / Danh mục (admin) ---
+app.MapPost("/api/admin/products", async (CreateProductRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new CreateProductCommand(request.Name, request.CategoryId, request.Price, request.OriginalPrice, request.Stock, request.Description, request.ImageUrl, request.Slug));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_CREATE_PRODUCT", "Product", result.Data!.Id.ToString(),
+            null, new { request.Name, request.Price, request.Stock }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminCreateProduct")
+.WithSummary("Admin tạo sản phẩm (tên 3–120, giá > 0, giá KM < giá gốc, tồn kho ≥ 0, danh mục đang hiển thị)")
+.WithTags("Admin - Quản trị");
+
+app.MapPut("/api/admin/products/{id:guid}", async (Guid id, UpdateProductRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var before = await dbContext.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
+    var result = await mediator.Send(new UpdateProductCommand(id, request.Name, request.CategoryId, request.Price, request.OriginalPrice, request.Stock, request.Description, request.ImageUrl, request.IsActive));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_UPDATE_PRODUCT", "Product", id.ToString(),
+            before == null ? null : new { before.Name, before.Price, before.Stock, before.IsActive },
+            new { request.Name, request.Price, request.Stock, request.IsActive }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminUpdateProduct")
+.WithSummary("Admin sửa sản phẩm (kèm ẩn/hiện)")
+.WithTags("Admin - Quản trị");
+
+app.MapDelete("/api/admin/products/{id:guid}", async (Guid id, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new DeleteProductCommand(id));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_DELETE_PRODUCT", "Product", id.ToString(),
+            null, new { IsDeleted = true }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminDeleteProduct")
+.WithSummary("Admin xóa mềm sản phẩm (giữ lịch sử đơn)")
+.WithTags("Admin - Quản trị");
+
+app.MapGet("/api/admin/categories", async (HttpContext httpContext, AppDbContext dbContext) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var categories = await dbContext.Categories.AsNoTracking().OrderBy(c => c.SortOrder).ThenBy(c => c.Name).ToListAsync();
+    var counts = await dbContext.Products.Where(p => !p.IsDeleted).GroupBy(p => p.CategoryId)
+        .Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count);
+    var dtos = categories.Select(c => new AdminCategoryDto(c.Id, c.Name, c.Slug, c.Description, c.IsActive, c.SortOrder, counts.GetValueOrDefault(c.Id))).ToList();
+    return Results.Ok(ApiResponse<List<AdminCategoryDto>>.Ok(dtos));
+})
+.WithName("AdminListCategories")
+.WithSummary("Danh sách danh mục cho admin (kèm số sản phẩm)")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/categories", async (CreateCategoryRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new CreateCategoryCommand(request.Name, request.Description, request.Slug, request.SortOrder));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_CREATE_CATEGORY", "Category", result.Data!.Id.ToString(),
+            null, new { request.Name }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminCreateCategory")
+.WithSummary("Admin tạo danh mục")
+.WithTags("Admin - Quản trị");
+
+app.MapPut("/api/admin/categories/{id:guid}", async (Guid id, UpdateCategoryRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new UpdateCategoryCommand(id, request.Name, request.Description, request.IsActive, request.SortOrder));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_UPDATE_CATEGORY", "Category", id.ToString(),
+            null, new { request.Name, request.IsActive }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminUpdateCategory")
+.WithSummary("Admin sửa / ẩn / sắp xếp danh mục")
+.WithTags("Admin - Quản trị");
+
+app.MapDelete("/api/admin/categories/{id:guid}", async (Guid id, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new DeleteCategoryCommand(id));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_DELETE_CATEGORY", "Category", id.ToString(),
+            null, null, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminDeleteCategory")
+.WithSummary("Admin xóa danh mục (chặn khi còn sản phẩm)")
+.WithTags("Admin - Quản trị");
+
+// --- Đơn hàng (admin) ---
+app.MapGet("/api/admin/orders", async (string? status, DateTime? from, DateTime? to, string? paymentMethod, string? search, bool? hasVoucher, bool? hasPoints, int? page, int? pageSize, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ListAdminOrdersQuery(status, from, to, paymentMethod, search, hasVoucher, hasPoints, page ?? 1, pageSize ?? 20));
+    return Results.Ok(result);
+})
+.WithName("AdminListOrders")
+.WithSummary("Admin xem đơn: lọc trạng thái/ngày/phương thức/voucher/điểm, tìm theo mã đơn/tên khách/tên SP")
+.WithTags("Admin - Quản trị");
+
+app.MapGet("/api/admin/orders/{id:guid}", async (Guid id, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new GetAdminOrderDetailQuery(id));
+    if (result.Data == null)
+    {
+        return Results.NotFound(ApiResponse<string>.Fail("Không tìm thấy đơn hàng."));
+    }
+    return Results.Ok(result);
+})
+.WithName("AdminGetOrderDetail")
+.WithSummary("Admin xem chi tiết đơn (kèm ghi chú nội bộ, lịch sử trạng thái)")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/orders/{id:guid}/status", async (Guid id, ChangeOrderStatusRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ChangeOrderStatusCommand(id, admin!.Id, request.ToStatus, request.Carrier, request.TrackingCode, request.Note, request.InternalNote));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin, "ADMIN_CHANGE_ORDER_STATUS", "Order", id.ToString(),
+            null, new { request.ToStatus, request.Carrier, request.TrackingCode }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminChangeOrderStatus")
+.WithSummary("Admin đổi trạng thái đơn theo máy trạng thái §4 (Shipping bắt buộc có đơn vị vận chuyển + mã vận đơn 6–30 ký tự)")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/orders/{id:guid}/cancel", async (Guid id, CancelOrderRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new AdminCancelOrderCommand(id, admin!.Id, request.Reason ?? string.Empty));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin, "ADMIN_CANCEL_ORDER", "Order", id.ToString(),
+            null, new { request.Reason }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminCancelOrder")
+.WithSummary("Admin hủy đơn trước Shipping (bắt buộc lý do; hoàn kho + hoàn điểm + nhả voucher)")
+.WithTags("Admin - Quản trị");
+
+// --- Khách hàng (admin) ---
+app.MapGet("/api/admin/customers", async (string? search, string? tier, int? page, int? pageSize, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ListCustomersQuery(search, tier, page ?? 1, pageSize ?? 20));
+    return Results.Ok(result);
+})
+.WithName("AdminListCustomers")
+.WithSummary("Admin xem khách hàng: hồ sơ, hạng, chi tiêu 12 tháng, số đơn")
+.WithTags("Admin - Quản trị");
+
+app.MapGet("/api/admin/customers/{id:guid}", async (Guid id, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var user = await dbContext.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id);
+    if (user == null || user.Role != "Customer")
+    {
+        return Results.NotFound(ApiResponse<string>.Fail("Không tìm thấy khách hàng."));
+    }
+    var orderCount = await dbContext.Orders.CountAsync(o => o.UserId == id);
+    var orders = await mediator.Send(new GetOrderHistoryQuery(id, null, 1, 10, null));
+    return Results.Ok(ApiResponse<object>.Ok(new
+    {
+        customer = new AdminCustomerDto(user.Id, user.Email, user.FullName, user.PhoneNumber, user.Role, user.IsLocked,
+            user.MembershipTier, user.TotalSpent12m, orderCount, user.CreatedAt, user.LastLoginAt),
+        recentOrders = orders.Data ?? new List<OrderHistoryDto>()
+    }));
+})
+.WithName("AdminGetCustomerDetail")
+.WithSummary("Admin xem hồ sơ + 10 đơn gần nhất của 1 khách")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/customers/{id:guid}/lock", async (Guid id, LockCustomerRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new LockCustomerCommand(id, request.Reason));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_LOCK_CUSTOMER", "User", id.ToString(),
+            new { IsLocked = false }, new { IsLocked = true, request.Reason }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminLockCustomer")
+.WithSummary("Admin khóa tài khoản khách (không đăng nhập/checkout được; JWT đang sống bị hủy)")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/customers/{id:guid}/unlock", async (Guid id, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new UnlockCustomerCommand(id));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_UNLOCK_CUSTOMER", "User", id.ToString(),
+            new { IsLocked = true }, new { IsLocked = false }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminUnlockCustomer")
+.WithSummary("Admin mở khóa tài khoản khách")
+.WithTags("Admin - Quản trị");
+
+// --- Khuyến mãi (admin) ---
+app.MapGet("/api/admin/promotions", async (string? status, int? page, int? pageSize, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ListPromotionsQuery(status, page ?? 1, pageSize ?? 20));
+    return Results.Ok(result);
+})
+.WithName("AdminListPromotions")
+.WithSummary("Admin xem khuyến mãi theo vòng đời Draft/Active/Disabled/Expired")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/promotions", async (CreatePromotionRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new CreatePromotionCommand(request.Code, request.Description, request.DiscountType, request.DiscountValue, request.MinOrderAmount, request.MaxDiscountAmount, request.StartDate, request.ExpiryDate, request.MaxUses, request.MaxUsesPerUser, request.MinTier, request.ScopeType, request.ScopeCategoryId, request.ScopeProductIds));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_CREATE_PROMOTION", "Voucher", result.Data!.Id.ToString(),
+            null, new { request.Code, request.DiscountType, request.DiscountValue }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminCreatePromotion")
+.WithSummary("Admin tạo khuyến mãi ở trạng thái Nháp (chưa chạy cho tới khi kích hoạt)")
+.WithTags("Admin - Quản trị");
+
+app.MapPut("/api/admin/promotions/{id:guid}", async (Guid id, UpdatePromotionRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new UpdatePromotionCommand(id, request.MaxUses, request.ExpiryDate, request.Description, request.MinOrderAmount, request.MaxDiscountAmount));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_UPDATE_PROMOTION", "Voucher", id.ToString(),
+            null, new { request.MaxUses, request.ExpiryDate }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminUpdatePromotion")
+.WithSummary("Admin sửa khuyến mãi (Draft sửa hết; Active chỉ tăng lượt/kéo dài hạn)")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/promotions/{id:guid}/activate", async (Guid id, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ActivatePromotionCommand(id));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_ACTIVATE_PROMOTION", "Voucher", id.ToString(),
+            new { Status = "Draft" }, new { Status = "Active" }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminActivatePromotion")
+.WithSummary("Admin kích hoạt khuyến mãi (Draft → Active)")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/promotions/{id:guid}/disable", async (Guid id, DisablePromotionRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new DisablePromotionCommand(id, request.Reason));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_DISABLE_PROMOTION", "Voucher", id.ToString(),
+            new { Status = "Active" }, new { Status = "Disabled", request.Reason }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminDisablePromotion")
+.WithSummary("Admin tắt khẩn cấp khuyến mãi (ghi lý do; đơn đã áp giữ nguyên giảm giá)")
+.WithTags("Admin - Quản trị");
+
+app.MapGet("/api/admin/promotions/{id:guid}/usage", async (Guid id, int? page, int? pageSize, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ListPromotionUsageQuery(id, page ?? 1, pageSize ?? 20));
+    return Results.Ok(result);
+})
+.WithName("AdminListPromotionUsage")
+.WithSummary("Admin xem lượt dùng của 1 khuyến mãi")
+.WithTags("Admin - Quản trị");
+
+// --- Hội viên (admin) ---
+app.MapGet("/api/admin/membership/config", async (HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new GetMembershipConfigQuery());
+    return Results.Ok(result);
+})
+.WithName("AdminGetMembershipConfig")
+.WithSummary("Admin xem cấu hình ngưỡng hạng + tỉ lệ điểm")
+.WithTags("Admin - Quản trị");
+
+app.MapPut("/api/admin/membership/config", async (UpdateMembershipConfigRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var tiers = request.Tiers.Select(t => new MembershipConfigDto(t.Tier, t.MinSpent, t.SpendPerPoint, t.MaxPointsPercent, t.FreeShipThreshold)).ToList();
+    var result = await mediator.Send(new UpdateMembershipConfigCommand(tiers));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_UPDATE_MEMBERSHIP_CONFIG", "MembershipTierConfig", null,
+            null, tiers, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminUpdateMembershipConfig")
+.WithSummary("Admin sửa cấu hình hạng (chỉ áp dụng cho đơn phát sinh sau đó)")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/membership/{userId:guid}/adjust-points", async (Guid userId, AdjustPointsRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new AdjustPointsCommand(userId, request.Points, request.Reason));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_ADJUST_POINTS", "User", userId.ToString(),
+            null, new { request.Points, request.Reason }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminAdjustPoints")
+.WithSummary("Admin điều chỉnh điểm thủ công (tối đa 1.000 điểm/lần, bắt buộc lý do, có AuditLog)")
+.WithTags("Admin - Quản trị");
+
+// --- Nhật ký hệ thống (chỉ đọc) ---
+app.MapGet("/api/admin/audit-log", async (string? action, Guid? actorId, DateTime? from, DateTime? to, int? page, int? pageSize, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ListAuditLogQuery(action, actorId, from, to, page ?? 1, pageSize ?? 20));
+    return Results.Ok(result);
+})
+.WithName("AdminListAuditLog")
+.WithSummary("Admin xem AuditLog (lọc theo người/hành động/ngày; không sửa/xóa được)")
+.WithTags("Admin - Quản trị");
+
+// --- Trả hàng / hoàn tiền (admin) ---
+app.MapGet("/api/admin/returns", async (string? status, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ListReturnRequestsQuery(null, null, status, AdminView: true));
+    return Results.Ok(result);
+})
+.WithName("AdminListReturns")
+.WithSummary("Admin xem yêu cầu trả hàng chờ duyệt")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/returns/{id:guid}/resolve", async (Guid id, ResolveReturnRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new ResolveReturnRequestCommand(id, admin!.Id, request.Approve, request.AdminNote));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin, "ADMIN_RESOLVE_RETURN", "ReturnRequest", id.ToString(),
+            new { Status = "Pending" }, new { request.Approve, request.AdminNote }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminResolveReturn")
+.WithSummary("Admin duyệt/từ chối trả hàng (từ chối bắt buộc lý do; duyệt tạo bản ghi hoàn tiền Chờ hoàn tiền)")
+.WithTags("Admin - Quản trị");
+
+app.MapPost("/api/admin/refunds/{id:guid}/record", async (Guid id, RecordRefundRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new RecordRefundCommand(id, request.TransactionCode));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_RECORD_REFUND", "RefundRecord", id.ToString(),
+            new { Status = "PendingRefund" }, new { Status = "Refunded", request.TransactionCode }, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminRecordRefund")
+.WithSummary("Admin ghi nhận đã hoàn tiền (nhập mã giao dịch hoàn) — hoàn tiền tự động qua PayOS là hướng phát triển")
+.WithTags("Admin - Quản trị");
+
 // Auto-seed database schema, users, vouchers, 26 categories, products
 using (var scope = app.Services.CreateScope())
 {
@@ -888,3 +1629,47 @@ public record SocialFacebookRequest(string AccessToken);
 public record SocialMockRequest(string Provider);
 
 public record SetPasswordRequest(string NewPassword);
+
+public record ForgotPasswordRequest(string Email);
+
+public record ResetPasswordRequest(string Email, string Code, string NewPassword, string? ConfirmNewPassword);
+
+public record MembershipPreferencesRequest(DateTime? BirthDate, string? DefaultPaymentMethod, bool? AutoUsePoints);
+
+public record ValidateVoucherItemRequest(Guid ProductId, Guid CategoryId, decimal LineTotal);
+
+public record ValidateVoucherRequest(string? GoodsVoucherCode, string? FreeShipVoucherCode, decimal SubTotal, List<ValidateVoucherItemRequest>? Items);
+
+public record CreateReturnRequestBody(Guid ProductId, int Quantity, string Reason, string? Note);
+
+public record CreateProductRequest(string Name, Guid CategoryId, decimal Price, decimal? OriginalPrice, int Stock, string Description, string ImageUrl, string? Slug = null);
+
+public record UpdateProductRequest(string Name, Guid CategoryId, decimal Price, decimal? OriginalPrice, int Stock, string Description, string ImageUrl, bool IsActive);
+
+public record CreateCategoryRequest(string Name, string? Description, string? Slug = null, int SortOrder = 0);
+
+public record UpdateCategoryRequest(string Name, string? Description, bool IsActive, int SortOrder);
+
+public record ChangeOrderStatusRequest(string ToStatus, string? Carrier, string? TrackingCode, string? Note, string? InternalNote);
+
+public record LockCustomerRequest(string? Reason);
+
+public record CreatePromotionRequest(
+    string Code, string Description, string DiscountType, decimal DiscountValue,
+    decimal MinOrderAmount, decimal? MaxDiscountAmount, DateTime? StartDate, DateTime? ExpiryDate,
+    int? MaxUses, int? MaxUsesPerUser, string? MinTier, string ScopeType, Guid? ScopeCategoryId,
+    string? ScopeProductIds);
+
+public record UpdatePromotionRequest(int? MaxUses, DateTime? ExpiryDate, string? Description, decimal? MinOrderAmount, decimal? MaxDiscountAmount);
+
+public record DisablePromotionRequest(string Reason);
+
+public record AdjustPointsRequest(int Points, string Reason);
+
+public record MembershipConfigItemDto(string Tier, decimal MinSpent, int SpendPerPoint, int MaxPointsPercent, decimal? FreeShipThreshold);
+
+public record UpdateMembershipConfigRequest(List<MembershipConfigItemDto> Tiers);
+
+public record ResolveReturnRequest(bool Approve, string? AdminNote);
+
+public record RecordRefundRequest(string TransactionCode);

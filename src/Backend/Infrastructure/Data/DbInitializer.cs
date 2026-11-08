@@ -119,6 +119,24 @@ public static class DbInitializer
         {
             logger.LogInformation("Ensuring database schema exists...");
             await context.Database.EnsureCreatedAsync();
+            // DB đã tồn tại từ bản cũ (EnsureCreated không thêm bảng/cột mới) → đồng bộ schema mở rộng.
+            await ExtendedSchemaSync.EnsureExtendedSchemaAsync(context, logger);
+
+            // 1a. Super Admin duy nhất (§1.2): tài liệu quy định Role chỉ có Customer/SuperAdmin.
+            // DB cũ seed Role = "Admin" → migrate về "SuperAdmin". Không có API đổi Role.
+            var legacyAdmins = await context.Users.Where(u => u.Role == "Admin").ToListAsync();
+            foreach (var legacyAdmin in legacyAdmins)
+            {
+                legacyAdmin.Role = "SuperAdmin";
+                logger.LogInformation("Migrated legacy Admin role to SuperAdmin for {Email}.", legacyAdmin.Email);
+            }
+            if (legacyAdmins.Count > 0) await context.SaveChangesAsync();
+            // Bảo vệ: nếu có hơn 1 SuperAdmin (do sửa tay), ghi cảnh báo — hệ thống vẫn chạy, admin đầu tiên giữ quyền.
+            var superAdminCount = await context.Users.CountAsync(u => u.Role == "SuperAdmin");
+            if (superAdminCount > 1)
+                logger.LogWarning("More than one SuperAdmin account exists ({Count}). Only one SuperAdmin is expected.", superAdminCount);
+            if (superAdminCount == 0 && await context.Users.AnyAsync())
+                logger.LogWarning("No SuperAdmin account found. Seed admin@dafl.vn or set Role='SuperAdmin' directly in DB.");
 
             // 1. Seed Demo Users
             if (!await context.Users.AnyAsync())
@@ -148,7 +166,7 @@ public static class DbInitializer
                     PasswordHash = passwordHash,
                     PhoneNumber = "0912345678",
                     Address = "Tòa nhà Keangnam, Mễ Trì, Hà Nội",
-                    Role = "Admin",
+                    Role = "SuperAdmin",
                     CreatedAt = DateTime.UtcNow,
                     EmailVerified = true,
                     EmailVerifiedAt = DateTime.UtcNow
@@ -216,7 +234,8 @@ public static class DbInitializer
                     MinOrderAmount = 0,
                     MaxDiscountAmount = null,
                     ExpiryDate = DateTime.UtcNow.AddYears(2),
-                    IsActive = true
+                    IsActive = true,
+                    MaxUsesPerUser = null // voucher seed cũ: giữ hành vi cũ, không giới hạn lượt/người
                 });
             }
 
@@ -231,7 +250,8 @@ public static class DbInitializer
                     MinOrderAmount = 100000,
                     MaxDiscountAmount = 100000,
                     ExpiryDate = DateTime.UtcNow.AddMonths(1),
-                    IsActive = true
+                    IsActive = true,
+                    MaxUsesPerUser = null // voucher seed cũ: giữ hành vi cũ, không giới hạn lượt/người
                 });
             }
 
@@ -246,7 +266,8 @@ public static class DbInitializer
                     MinOrderAmount = 100000,
                     MaxDiscountAmount = 20000,
                     ExpiryDate = DateTime.UtcNow.AddMonths(1),
-                    IsActive = true
+                    IsActive = true,
+                    MaxUsesPerUser = null // voucher seed cũ: giữ hành vi cũ, không giới hạn lượt/người
                 });
             }
 
@@ -261,7 +282,8 @@ public static class DbInitializer
                     MinOrderAmount = 200000,
                     MaxDiscountAmount = 30000,
                     ExpiryDate = DateTime.UtcNow.AddMonths(1),
-                    IsActive = true
+                    IsActive = true,
+                    MaxUsesPerUser = null // voucher seed cũ: giữ hành vi cũ, không giới hạn lượt/người
                 });
             }
 
@@ -276,7 +298,8 @@ public static class DbInitializer
                     MinOrderAmount = 500000,
                     MaxDiscountAmount = 50000,
                     ExpiryDate = DateTime.UtcNow.AddMonths(1),
-                    IsActive = true
+                    IsActive = true,
+                    MaxUsesPerUser = null // voucher seed cũ: giữ hành vi cũ, không giới hạn lượt/người
                 });
             }
 

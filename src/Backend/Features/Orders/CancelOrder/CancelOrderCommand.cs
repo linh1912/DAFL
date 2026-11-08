@@ -1,4 +1,5 @@
 using DAFL.Backend.Common;
+using DAFL.Backend.Features.Membership;
 using DAFL.Backend.Infrastructure.Data;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -65,7 +66,23 @@ public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, Api
                         }
                     }
                 }
+                else
+                {
+                    // PayOS đang giữ chỗ (chưa trừ thật): nhả giữ chỗ.
+                    foreach (var item in order.Items)
+                    {
+                        var product = await _context.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId, cancellationToken);
+                        if (product != null)
+                        {
+                            product.ReservedStock = Math.Max(0, product.ReservedStock - item.Quantity);
+                        }
+                    }
+                }
 
+                // Hoàn điểm đã dùng + nhả lượt voucher — đúng 1 lần (idempotent, §11.2).
+                await MembershipService.ReleaseOrderBenefitsAsync(_context, order, cancellationToken);
+
+                var previousStatus = order.Status;
                 order.Status = OrderStatus.Cancelled;
                 order.CancelReason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim();
                 order.CancelledAt = DateTime.UtcNow;
@@ -75,6 +92,7 @@ public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, Api
                     Id = Guid.NewGuid(),
                     OrderId = order.Id,
                     Status = OrderStatus.Cancelled,
+                    PreviousStatus = previousStatus,
                     Note = string.IsNullOrWhiteSpace(order.CancelReason)
                         ? "Khách hàng hủy đơn"
                         : $"Khách hàng hủy đơn. Lý do: {order.CancelReason}",

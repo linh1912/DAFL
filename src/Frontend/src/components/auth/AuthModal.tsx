@@ -416,7 +416,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       {!isModal && (
         <aside className="auth-side-panel" aria-hidden="true">
           <div className="auth-side-logo">D</div>
-          <div className="auth-side-name">DAFL</div>
+          <div className="auth-side-name">GlowMart</div>
         </aside>
       )}
       <div className={isModal ? undefined : 'auth-main-panel'}>

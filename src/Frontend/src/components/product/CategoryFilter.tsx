@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, X } from 'lucide-react';
 import { Category } from '../../types';
+import { shortCategoryName } from '../../utils/shops';
 
 export interface CategoryFilterProps {
   categories: Category[];
@@ -29,7 +30,7 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
     <section data-testid="category-filter-section">
       <div className="section-title category-section-title">
         <div className="category-title-left">
-          <span>Danh mục ngành hàng ({categories.length} hạng mục)</span>
+          <span>Danh mục mỹ phẩm ({categories.length})</span>
           {selectedCategory && (
             <button
               className="category-clear-btn"
@@ -92,8 +93,10 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
               className={`category-pill ${selectedCategory === cat.id ? 'active' : ''}`}
               onClick={() => onSelectCategory(cat.id)}
               data-testid={`category-pill-${cat.id}`}
+              title={cat.name}
             >
-              {cat.name}
+              {cat.iconUrl && cat.iconUrl.length <= 4 ? <span aria-hidden>{cat.iconUrl}</span> : null}
+              {shortCategoryName(cat.name)}
             </button>
           ))}
         </div>

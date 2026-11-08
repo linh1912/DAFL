@@ -19,6 +19,10 @@ public interface IJwtService
 
     /// <summary>Kiểm tra chữ ký + hạn dùng. Hợp lệ → trả userId (claim sub), ngược lại null.</summary>
     Guid? ValidateToken(string? token);
+
+    /// <summary>Đọc TokenVersion (claim "tv") của token đã ký hợp lệ; null nếu token không hợp lệ.
+    /// Dùng để vô hiệu JWT cũ sau khi đổi/đặt lại mật khẩu (User.TokenVersion tăng).</summary>
+    int? GetTokenVersion(string? token);
 }
 
 public class JwtService : IJwtService
@@ -54,6 +58,7 @@ public class JwtService : IJwtService
             email = user.Email,
             name = user.FullName,
             role = user.Role,
+            tv = user.TokenVersion,
             iat = new DateTimeOffset(now).ToUnixTimeSeconds(),
             exp = new DateTimeOffset(expiresAt).ToUnixTimeSeconds()
         });
@@ -113,6 +118,24 @@ public class JwtService : IJwtService
         }
     }
 
+    public int? GetTokenVersion(string? token)
+    {
+        if (ValidateToken(token) == null) return null;
+        try
+        {
+            var payloadJson = Encoding.UTF8.GetString(Base64UrlDecode(token!.Split('.')[1]));
+            using var doc = JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            // Token cấp trước khi có claim tv (bản cũ) được coi là tv = 0 — khớp TokenVersion mặc định.
+            if (root.TryGetProperty("tv", out var tvElement) && tvElement.TryGetInt32(out var tv)) return tv;
+            return 0;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private byte[] Sign(string signingInput)
     {
         using var hmac = new HMACSHA256(_key);
@@ -138,9 +161,15 @@ public class JwtService : IJwtService
 public static class HttpContextAuthExtensions
 {
     public const string CurrentUserIdItemKey = "CurrentUserId";
+    public const string CurrentTokenVersionItemKey = "CurrentTokenVersion";
 
     public static Guid? GetCurrentUserId(this HttpContext context)
         => context.Items.TryGetValue(CurrentUserIdItemKey, out var value) && value is Guid userId
             ? userId
+            : null;
+
+    public static int? GetCurrentTokenVersion(this HttpContext context)
+        => context.Items.TryGetValue(CurrentTokenVersionItemKey, out var value) && value is int tv
+            ? tv
             : null;
 }

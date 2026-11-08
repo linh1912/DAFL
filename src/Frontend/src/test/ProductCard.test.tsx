@@ -40,7 +40,7 @@ describe('Product Card & Add-To-Cart Component', () => {
     );
 
     expect(screen.getByTestId('product-name-prod-1')).toHaveTextContent('Tai nghe Bluetooth Pro');
-    expect(screen.getByTestId('product-stock-prod-1')).toHaveTextContent('Còn 15 sản phẩm');
+    expect(screen.getByTestId('product-stock-prod-1')).toHaveTextContent('Còn 15');
     expect(screen.getByText('-38%')).toBeInTheDocument(); // Math.round(((800-500)/800)*100) = 38%
   });
 

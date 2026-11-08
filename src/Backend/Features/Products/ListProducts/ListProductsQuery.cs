@@ -48,7 +48,7 @@ public class ListProductsQueryHandler : IRequestHandler<ListProductsQuery, ApiRe
         var query = _context.Products
             .AsNoTracking()
             .Include(p => p.Category)
-            .Where(p => p.IsActive)
+            .Where(p => p.IsActive && !p.IsDeleted)
             .AsQueryable();
 
         if (request.CategoryId.HasValue && request.CategoryId.Value != Guid.Empty)

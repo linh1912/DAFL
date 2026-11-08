@@ -3,7 +3,7 @@ import {
   ShoppingBag, Sparkles, CheckCircle2, Clock,
   CreditCard, ShieldCheck, X, Plus, Minus,
   User as UserIcon, Bell, Star, Tag, LogOut, Check, RefreshCw, Package,
-  MapPin, Calendar, RotateCcw, Receipt, ArrowLeft, Copy, AlertCircle, Truck, FileText, Layers
+  MapPin, Calendar, RotateCcw, Receipt, ArrowLeft, Copy, AlertCircle, Truck, FileText, Layers, Store
 } from 'lucide-react';
 import * as signalR from '@microsoft/signalr';
 import {
@@ -21,6 +21,7 @@ import { CategoryFilter } from './components/product/CategoryFilter';
 import { ProductCard } from './components/product/ProductCard';
 import { ProductGallery } from './components/product/ProductGallery';
 import { resolveGalleryImages } from './utils/images';
+import { timeAgoVi } from './utils/shops';
 import { CartDrawer } from './components/cart/CartDrawer';
 import { AuthModal, RegisterFormValues, RegisterFieldErrors, PasswordRuleList } from './components/auth/AuthModal';
 import { SocialProviderKey, SOCIAL_PROVIDER_LABEL } from './utils/socialAuth';
@@ -53,6 +54,42 @@ const FREE_SHIPPING_THRESHOLD = 299000;
 const CATALOG_PAGE_SIZE = 12;
 /** Số đơn mỗi trang ở trang Đơn hàng. */
 const ORDERS_PAGE_SIZE = 10;
+
+/** Slide hero trang chủ GlowMart — ít chữ, tự chạy 5s/slide. */
+const HERO_SLIDES = [
+  {
+    badge: 'FLASH SALE • GIẢM ĐẾN 50%',
+    title: 'GlowMart — Sàn mỹ phẩm đa gian hàng',
+    sub: 'Son, serum, kem chống nắng chính hãng từ nhiều shop.',
+    cta: 'Mua ngay',
+  },
+  {
+    badge: 'FREESHIP ĐƠN TỪ 299K',
+    title: 'Mua mỹ phẩm, freeship tận nhà',
+    sub: 'Giao nhanh 2–4 ngày, đổi trả trong 30 ngày.',
+    cta: 'Xem deal freeship',
+  },
+  {
+    badge: 'HỘI VIÊN GLOWMART',
+    title: 'Tích điểm mỗi đơn, lên hạng nhận ưu đãi',
+    sub: 'Thường • Bạc • Vàng • Kim cương.',
+    cta: 'Khám phá hội viên',
+  },
+];
+
+/** Gian hàng mỹ phẩm nổi bật (hiển thị — dữ liệu shop thật chờ BE có entity Shop). */
+const FEATURED_SHOPS = [
+  { slug: 'glow-official', name: 'Glow Official', tag: 'Chính hãng', rating: '4.9', sold: '12k đã bán' },
+  { slug: 'lumiere-beauty', name: 'Lumière Beauty', tag: 'Chính hãng', rating: '4.8', sold: '8,5k đã bán' },
+  { slug: 'pureskin-lab', name: 'PureSkin Lab', tag: 'Skincare', rating: '4.9', sold: '6k đã bán' },
+  { slug: 'rose-botanica', name: 'Rose Botanica', tag: 'Thiên nhiên', rating: '4.7', sold: '4k đã bán' },
+];
+
+/** Các mốc vòng đời đơn theo tài liệu nghiệp vụ §4/§8 (dùng vẽ stepper ở chi tiết đơn). */
+const ORDER_FLOW_STEPS = ['Đặt hàng', 'Thanh toán', 'Xác nhận', 'Đang giao', 'Đã giao', 'Hoàn tất'];
+const ORDER_STEP_INDEX: Record<string, number> = {
+  Pending: 0, Expired: 0, Paid: 1, Confirmed: 2, Preparing: 2, Shipping: 3, Delivered: 4, Completed: 5,
+};
 
 /** Đọc giỏ khách (localStorage) — giỏ của khách chưa đăng nhập (CN-06.1). */
 const readGuestCart = (): CartItem[] => {
@@ -151,6 +188,15 @@ export default function App() {
   const [catalogHasNext, setCatalogHasNext] = useState(false);
   const [catalogKnownTotal, setCatalogKnownTotal] = useState<number | null>(null);
   const catalogRequestSeq = useRef(0);
+
+  // Hero carousel trang chủ: tự chạy 5s/slide, có thể bấm dot để đổi.
+  const [heroSlide, setHeroSlide] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setHeroSlide(prev => (prev + 1) % HERO_SLIDES.length);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Product Detail State
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
@@ -1725,9 +1771,12 @@ export default function App() {
     order.statusLabel || (order.status === 'Pending'
       ? (order.paymentMethod === 'PayOS' ? 'Chờ thanh toán' : 'Chờ xác nhận')
       : order.status === 'Paid' ? 'Chờ xác nhận'
+      : order.status === 'Confirmed' ? 'Đã xác nhận'
       : order.status === 'Preparing' ? 'Đang chuẩn bị'
       : order.status === 'Shipping' ? 'Đang giao'
       : order.status === 'Delivered' ? 'Đã giao'
+      : order.status === 'Completed' ? 'Hoàn tất'
+      : order.status === 'ReturnRequested' ? 'Trả hàng'
       : order.status === 'Cancelled' ? 'Đã hủy'
       : order.status === 'Expired' ? 'Đã hết hạn' : order.status);
 
@@ -1805,22 +1854,52 @@ export default function App() {
           path="/"
           element={
             <>
-              {/* Compact collection heading */}
-              <section className="hero">
-                <div className="hero-layout">
-                  <div className="hero-main">
+              {/* Hero carousel — ít chữ, tự chạy */}
+              <section className="hero-carousel" data-testid="hero-carousel" aria-label="Ưu đãi nổi bật">
+                {HERO_SLIDES.map((slide, i) => (
+                  <div
+                    key={slide.title}
+                    className={`hero-slide ${i === heroSlide ? 'active' : ''}`}
+                    data-testid={`hero-slide-${i}`}
+                    aria-hidden={i !== heroSlide}
+                  >
                     <div className="hero-top-badge">
                       <Sparkles size={14} color="#b80039" />
-                      <span>FLASH SALE DAFL • GIẢM ĐẾN 50%</span>
+                      <span>{slide.badge}</span>
                     </div>
-                    <h1 className="hero-title">
-                      Sàn Thương Mại Điện Tử DAFL
-                    </h1>
-                    <p className="hero-subtitle">
-                      Mỹ phẩm chính hãng với giá hiển thị rõ ràng, ưu đãi theo ngày và chính sách đổi trả trong 30 ngày.
-                    </p>
+                    <h1 className="hero-title">{slide.title}</h1>
+                    <p className="hero-subtitle">{slide.sub}</p>
+                    <button
+                      type="button"
+                      className="hero-pdd-cta"
+                      onClick={() => document.getElementById('products-section')?.scrollIntoView({ behavior: 'smooth' })}
+                    >
+                      {slide.cta} →
+                    </button>
                   </div>
+                ))}
+                <div className="hero-dots" role="tablist" aria-label="Chọn slide">
+                  {HERO_SLIDES.map((slide, i) => (
+                    <button
+                      key={slide.title}
+                      type="button"
+                      role="tab"
+                      aria-selected={i === heroSlide}
+                      aria-label={`Slide ${i + 1}: ${slide.badge}`}
+                      className={`hero-dot ${i === heroSlide ? 'active' : ''}`}
+                      data-testid={`hero-dot-${i}`}
+                      onClick={() => setHeroSlide(i)}
+                    />
+                  ))}
                 </div>
+              </section>
+
+              {/* Dải tin cậy — 4 ý ngắn */}
+              <section className="trust-strip" aria-label="Cam kết mua sắm">
+                <span><ShieldCheck size={16} /> Chính hãng 100%</span>
+                <span><Truck size={16} /> Freeship đơn từ 299K</span>
+                <span><RotateCcw size={16} /> Đổi trả 30 ngày</span>
+                <span><CreditCard size={16} /> PayOS &amp; COD</span>
               </section>
 
               {/* Categories Filter Bar */}
@@ -1921,9 +2000,15 @@ export default function App() {
                   </div>
 
                   {loading ? (
-                    <div className="shop-empty-state">
-                      <RefreshCw size={24} className="spin" />
-                      <div>Đang tải danh sách sản phẩm...</div>
+                    <div className="products-skeleton" data-testid="catalog-skeleton" aria-label="Đang tải sản phẩm">
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <div key={i} className="skeleton-card">
+                          <div className="skeleton-img" />
+                          <div className="skeleton-line short" />
+                          <div className="skeleton-line" />
+                          <div className="skeleton-line price" />
+                        </div>
+                      ))}
                     </div>
                   ) : products.length === 0 ? (
                     <div className="shop-empty-state" data-testid="catalog-empty-state">
@@ -1992,25 +2077,33 @@ export default function App() {
                 </section>
               </div>
 
-              <section className="brand-banner-row" aria-label="Danh mục nổi bật tại DAFL">
-                {(categories.length > 0 ? categories.slice(0, 4) : [
-                  { id: 'dafl-care', name: 'Chăm sóc da' },
-                  { id: 'dafl-makeup', name: 'Trang điểm' },
-                  { id: 'dafl-hair', name: 'Chăm sóc tóc' },
-                  { id: 'dafl-body', name: 'Cơ thể & nước hoa' },
-                ]).map(category => (
-                  <button
-                    key={category.id}
-                    type="button"
-                    className="brand-banner"
-                    onClick={() => {
-                      if (categories.length > 0) setSelectedCategory(category.id);
-                    }}
-                  >
-                    <strong>{category.name}</strong>
-                    <span>Ưu đãi DAFL đang áp dụng</span>
-                  </button>
-                ))}
+              {/* Gian hàng mỹ phẩm nổi bật */}
+              <section className="shop-strip" aria-label="Gian hàng nổi bật">
+                <div className="shop-strip-header">
+                  <h2>Gian hàng nổi bật</h2>
+                  <span>Nhiều shop mỹ phẩm chính hãng trên một sàn</span>
+                </div>
+                <div className="shop-strip-row">
+                  {FEATURED_SHOPS.map(shop => (
+                    <button
+                      key={shop.slug}
+                      type="button"
+                      className="shop-card"
+                      data-testid={`shop-card-${shop.slug}`}
+                      onClick={() => {
+                        setSelectedCategory('cat-9');
+                        document.getElementById('products-section')?.scrollIntoView({ behavior: 'smooth' });
+                      }}
+                    >
+                      <span className="shop-card-icon"><Store size={20} /></span>
+                      <strong>{shop.name}</strong>
+                      <span className="shop-card-meta">
+                        <Star size={12} fill="#f5a623" color="#f5a623" /> {shop.rating} • {shop.sold}
+                      </span>
+                      <span className="shop-card-tag">{shop.tag}</span>
+                    </button>
+                  ))}
+                </div>
               </section>
             </>
           }
@@ -2042,7 +2135,7 @@ export default function App() {
                       </h1>
                     </div>
                     <p className="page-subtitle" style={{ marginTop: 6 }}>
-                      Theo dõi tiến độ đơn hàng, xem chi tiết và hủy đơn khi đơn còn ở trạng thái Chờ xác nhận.
+                      Theo dõi đơn theo trạng thái, xem chi tiết và hủy đơn khi còn chờ xác nhận.
                     </p>
                   </div>
 
@@ -2068,26 +2161,34 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Bộ lọc theo nhãn trạng thái (CN-08.1) */}
-                <div className="orders-filter-bar">
-                  <label htmlFor="order-status-filter" style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-                    Lọc theo trạng thái:
-                  </label>
-                  <select
-                    id="order-status-filter"
-                    className="form-input orders-filter-select"
-                    value={orderStatusFilter}
-                    onChange={e => setOrderStatusFilter(e.target.value)}
-                    data-testid="order-status-filter"
-                  >
-                    <option value="">Tất cả</option>
-                    <option value="Chờ xác nhận">Chờ xác nhận</option>
-                    <option value="Chờ thanh toán">Chờ thanh toán</option>
-                    <option value="Đang chuẩn bị">Đang chuẩn bị</option>
-                    <option value="Đang giao">Đang giao</option>
-                    <option value="Đã giao">Đã giao</option>
-                    <option value="Đã hủy">Đã hủy</option>
-                  </select>
+                {/* Bộ lọc theo trạng thái — tab theo máy trạng thái §4/§8 của tài liệu nghiệp vụ */}
+                <div className="order-filter-tabs" data-testid="order-status-filter" role="tablist" aria-label="Lọc đơn theo trạng thái">
+                  {[
+                    { value: '', label: 'Tất cả' },
+                    { value: 'Chờ xác nhận', label: 'Chờ xác nhận' },
+                    { value: 'Chờ thanh toán', label: 'Chờ thanh toán' },
+                    { value: 'Đã xác nhận', label: 'Đã xác nhận' },
+                    { value: 'Đang giao', label: 'Đang giao' },
+                    { value: 'Đã giao', label: 'Đã giao' },
+                    { value: 'Hoàn tất', label: 'Hoàn tất' },
+                    { value: 'Trả hàng', label: 'Trả hàng' },
+                    { value: 'Đã hủy', label: 'Đã hủy' },
+                  ].map(tab => (
+                    <button
+                      key={tab.value || 'all'}
+                      type="button"
+                      role="tab"
+                      aria-selected={orderStatusFilter === tab.value}
+                      className={`order-filter-btn ${orderStatusFilter === tab.value ? 'active' : ''}`}
+                      data-testid={`order-status-tab-${tab.value || 'all'}`}
+                      onClick={() => setOrderStatusFilter(tab.value)}
+                    >
+                      {tab.label}
+                      {tab.value !== '' && ordersList.length > 0 && orderStatusFilter === tab.value
+                        ? ` (${ordersList.length})`
+                        : ''}
+                    </button>
+                  ))}
                 </div>
 
                 {cancelSuccessCode && (
@@ -2107,7 +2208,7 @@ export default function App() {
                     <Package size={56} style={{ margin: '0 auto 14px', opacity: 0.3, color: 'var(--text-muted)' }} />
                     <h3 style={{ fontSize: '1.2rem', marginBottom: 8 }}>Bạn chưa có đơn hàng nào</h3>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 20 }}>
-                      Khám phá ngay các ưu đãi giảm giá và sản phẩm nổi bật tại DAFL Store!
+                      Khám phá deal mỹ phẩm nổi bật trên GlowMart!
                     </p>
                     <button type="button" className="btn btn-primary" onClick={() => navigateTo('home')}>
                       <ShoppingBag size={16} /> Mua sắm ngay
@@ -2180,7 +2281,7 @@ export default function App() {
                                     <CreditCard size={15} /> Thanh toán ngay
                                   </button>
                                 )}
-                                {(order.status === 'Paid' || order.status === 'Delivered') && (
+                                {(order.status === 'Paid' || order.status === 'Delivered' || order.status === 'Completed' || order.status === 'Cancelled') && (
                                   <button
                                     type="button"
                                     className="btn btn-secondary"
@@ -2302,12 +2403,28 @@ export default function App() {
                       <div className="order-detail-grand-total"><span>Tổng cộng:</span><span>{formatPrice(selectedOrder.totalAmount)}</span></div>
                     </div>
 
-                    {selectedOrder.statusHistories && selectedOrder.statusHistories.length > 0 && (
-                      <div className="order-timeline-box" data-testid="order-timeline">
-                        <div style={{ fontWeight: 700, marginBottom: 6, fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          Tiến trình trạng thái đơn hàng:
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {/* Stepper vòng đời đơn (§4/§8) + lịch sử trạng thái chi tiết */}
+                    <div className="order-timeline-box" data-testid="order-timeline">
+                      <div className="order-stepper" aria-label="Tiến trình đơn hàng">
+                        {ORDER_FLOW_STEPS.map((step, i) => {
+                          const currentIdx = ORDER_STEP_INDEX[selectedOrder.status] ?? 0;
+                          const cancelled = selectedOrder.status === 'Cancelled';
+                          const done = !cancelled && i <= currentIdx;
+                          const isCurrent = !cancelled && i === currentIdx;
+                          return (
+                            <div key={step} className={`order-step ${done ? 'done' : ''} ${isCurrent ? 'current' : ''}`}>
+                              <span className="order-step-dot">{done ? <Check size={11} /> : i + 1}</span>
+                              <span className="order-step-label">{step}</span>
+                              {i < ORDER_FLOW_STEPS.length - 1 && <span className="order-step-line" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {selectedOrder.status === 'Cancelled' && (
+                        <div style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: 8 }}>Đơn đã hủy — không đi tiếp các bước sau.</div>
+                      )}
+                      {selectedOrder.statusHistories && selectedOrder.statusHistories.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 10 }}>
                           {selectedOrder.statusHistories.map((h, i) => (
                             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem' }}>
                               <CheckCircle2 size={12} color="#10b981" />
@@ -2316,8 +2433,8 @@ export default function App() {
                             </div>
                           ))}
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
                     {orderStatusLabelOf(selectedOrder) === 'Đã hủy' && selectedOrder.cancelReason && (
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 10 }}>
@@ -3020,7 +3137,7 @@ export default function App() {
 
                           <div className="detail-section" style={{ marginBottom: 10 }}>
                             <h4 className="detail-section-title">
-                              <Truck size={18} color="var(--primary)" /> Chính sách bán hàng & Dịch vụ khách hàng DAFL
+                              <Truck size={18} color="var(--primary)" /> Chính sách bán hàng & Dịch vụ khách hàng GlowMart
                             </h4>
                             <div className="guarantees-grid">
                               {extra.guarantees.map((g, idx) => (
@@ -3263,7 +3380,10 @@ export default function App() {
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Bell size={20} color="var(--primary)" />
-                <h2 className="modal-title">Hộp thư thông báo</h2>
+                <h2 className="modal-title">Thông báo</h2>
+                {unreadCount > 0 && (
+                  <span className="badge-count" style={{ position: 'static' }}>{unreadCount} mới</span>
+                )}
               </div>
               <button
                 type="button"
@@ -3282,7 +3402,7 @@ export default function App() {
                 onClick={markAllNotificationsAsRead}
                 data-testid="mark-all-read-btn"
               >
-                Đánh dấu tất cả đã đọc
+                Đánh dấu đã đọc tất cả
               </button>
             </div>
 
@@ -3293,28 +3413,30 @@ export default function App() {
                   <p>Không có thông báo nào.</p>
                 </div>
               ) : (
-                notifications.map(n => (
+                notifications.map(n => {
+                  const NotifIcon = n.type === 'Payment' ? CreditCard : n.type === 'Order' ? Package : n.type === 'Promotion' ? Tag : Bell;
+                  return (
                   <div
                     key={n.id}
-                    className={`notification-item ${!n.isRead ? 'unread' : ''}`}
+                    className={`notification-item notif-compact ${!n.isRead ? 'unread' : ''}`}
                     onClick={() => markNotificationAsRead(n.id)}
                     style={{ cursor: 'pointer' }}
+                    data-testid={`notification-item-${n.id}`}
                   >
-                    {!n.isRead && <div className="unread-dot" />}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                      <span className={`notif-badge ${(n.type || 'system').toLowerCase()}`}>
-                        {n.type === 'Payment' ? '💳 Thanh toán' : n.type === 'Order' ? '📦 Đơn hàng' : n.type === 'Promotion' ? '🎁 Khuyến mãi' : '⚙️ Hệ thống'}
-                      </span>
-                      <strong style={{ fontSize: '0.95rem', color: 'var(--text-main)' }}>{n.title}</strong>
-                    </div>
-                    <p style={{ fontSize: '0.825rem', color: 'var(--text-muted)', lineHeight: 1.4, margin: '4px 0' }}>
-                      {n.message}
-                    </p>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
-                      {new Date(n.createdAt).toLocaleTimeString('vi-VN')} - {new Date(n.createdAt).toLocaleDateString('vi-VN')}
+                    <span className="notif-icon">
+                      <NotifIcon size={16} />
                     </span>
+                    <span className="notif-body">
+                      <span className="notif-title-row">
+                        <strong>{n.title}</strong>
+                        <span className="notif-time">{timeAgoVi(n.createdAt)}</span>
+                      </span>
+                      <span className="notif-message">{n.message}</span>
+                    </span>
+                    {!n.isRead && <span className="unread-dot" />}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>

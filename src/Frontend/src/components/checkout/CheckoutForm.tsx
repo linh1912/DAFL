@@ -387,12 +387,12 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
   return (
     <form onSubmit={handleFormSubmit} noValidate data-testid="checkout-form">
       <h4 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: 12, color: 'var(--text-main)' }}>
-        Thông tin giao hàng
+        Giao hàng
       </h4>
 
       {/* Email nhận thông tin đơn — luôn hiển thị, mặc định là email tài khoản */}
       <div className="form-group">
-        <label className="form-label" htmlFor="shipping-email">Email nhận thông tin đơn hàng</label>
+        <label className="form-label" htmlFor="shipping-email">Email</label>
         <input
           id="shipping-email"
           className="form-input"
@@ -472,11 +472,13 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
       {/* Form nhập địa chỉ mới */}
       {showNewAddressForm && (
         <div data-testid="shipping-new-address-form">
-          <div className="form-group">
-            <label className="form-label" htmlFor="shipping-recipient">Họ tên người nhận</label>
+          <div className="checkout-grid-2">
+            <div className="form-group">
+              <label className="form-label" htmlFor="shipping-recipient">Người nhận</label>
             <input
               id="shipping-recipient"
               className="form-input"
+              placeholder="VD: Nguyễn Văn A"
               data-testid="shipping-recipient-input"
               ref={setFieldRef('recipient')}
               value={customerName}
@@ -494,11 +496,12 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
           </div>
 
           <div className="form-group">
-            <label className="form-label" htmlFor="shipping-phone">Số điện thoại người nhận</label>
+            <label className="form-label" htmlFor="shipping-phone">Số điện thoại</label>
             <input
               id="shipping-phone"
               className="form-input"
               inputMode="numeric"
+              placeholder="VD: 0901234567"
               data-testid="shipping-phone-input"
               ref={setFieldRef('phone')}
               value={customerPhone}
@@ -513,6 +516,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
                 {errors.phone}
               </div>
             )}
+          </div>
           </div>
 
           {PROVINCES_AVAILABLE ? (
@@ -683,10 +687,11 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
           )}
 
           <div className="form-group">
-            <label className="form-label" htmlFor="shipping-detail">Địa chỉ chi tiết (số nhà, tên đường, tòa nhà...)</label>
+            <label className="form-label" htmlFor="shipping-detail">Số nhà, tên đường</label>
             <input
               id="shipping-detail"
               className="form-input"
+              placeholder="VD: 123 Nguyễn Trãi"
               data-testid="shipping-detail-input"
               ref={setFieldRef('detail')}
               value={detailAddress}
@@ -706,7 +711,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
 
           <div className="form-group">
             <label className="form-label" htmlFor="shipping-note">
-              Ghi chú cho đơn hàng (không bắt buộc)
+              Ghi chú (không bắt buộc)
               <span className="note-counter" data-testid="shipping-note-counter">{note.length}/{ORDER_NOTE_MAX_LENGTH}</span>
             </label>
             <textarea
@@ -762,7 +767,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
             />
             <span>
               <strong>Thanh toán khi nhận hàng (COD)</strong>
-              <small>Trả tiền mặt/chuyển khoản cho shipper khi nhận hàng.</small>
+              <small>Trả tiền khi nhận hàng.</small>
             </span>
           </label>
           <label className={`payment-method-option ${effectivePaymentMethod === 'PayOS' ? 'selected' : ''}`}>
@@ -776,7 +781,7 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({
             />
             <span>
               <strong>Thanh toán trực tuyến PayOS</strong>
-              <small>Quét VietQR/chuyển khoản ngay, đơn được giữ kho 15 phút.</small>
+              <small>Quét VietQR, giữ kho 15 phút.</small>
             </span>
           </label>
         </div>

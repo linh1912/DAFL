@@ -1,4 +1,6 @@
 using DAFL.Backend.Common;
+using DAFL.Backend.Features.Membership;
+using DAFL.Backend.Features.Promotions;
 using DAFL.Backend.Infrastructure.Data;
 using DAFL.Backend.Infrastructure.Hubs;
 using DAFL.Backend.Infrastructure.Payments;
@@ -42,7 +44,10 @@ public record CheckoutCommand(
     string PaymentMethod = "COD",
     string? OrderNote = null,
     Guid? AddressBookId = null,
-    string? IdempotencyKey = null) : IRequest<ApiResponse<CheckoutResultDto>>;
+    string? IdempotencyKey = null,
+    // Mở rộng (§7.3 stacking + §5.2 điểm): mã freeship thứ hai + số điểm muốn dùng. Mặc định 0 = giữ hành vi cũ.
+    string? FreeShipVoucherCode = null,
+    int PointsToUse = 0) : IRequest<ApiResponse<CheckoutResultDto>>;
 
 public record CheckoutResultDto(
     Guid OrderId,
@@ -59,7 +64,9 @@ public record CheckoutResultDto(
     DateTime ExpiresAt,
     string? OrderDisplayCode,
     string PaymentMethod,
-    decimal ShippingFee);
+    decimal ShippingFee,
+    int PointsUsed = 0,
+    decimal PointsDiscount = 0);
 
 public class CheckoutCommandValidator : AbstractValidator<CheckoutCommand>
 {
@@ -74,6 +81,12 @@ public class CheckoutCommandValidator : AbstractValidator<CheckoutCommand>
             .WithMessage("Phương thức thanh toán không hợp lệ.");
         RuleFor(x => x.OrderNote)
             .MaximumLength(200).WithMessage("Ghi chú đơn hàng tối đa 200 ký tự.");
+        // Điểm + freeship (§5.2/§7.3): điểm không âm; 2 mã voucher (nếu có cả hai) phải khác nhau.
+        RuleFor(x => x.PointsToUse).GreaterThanOrEqualTo(0).WithMessage("Số điểm dùng không được âm.");
+        RuleFor(x => x.FreeShipVoucherCode).MaximumLength(50).WithMessage("Mã freeship quá dài.");
+        RuleFor(x => x).Must(x => string.IsNullOrWhiteSpace(x.VoucherCode) || string.IsNullOrWhiteSpace(x.FreeShipVoucherCode)
+                || !x.VoucherCode.Trim().Equals(x.FreeShipVoucherCode.Trim(), StringComparison.OrdinalIgnoreCase))
+            .WithMessage("Mã giảm tiền hàng và mã freeship phải khác nhau.");
         RuleForEach(x => x.Items).ChildRules(item =>
         {
             item.RuleFor(i => i.ProductId).NotEmpty();
@@ -167,6 +180,8 @@ public class CheckoutCommandHandler : IRequestHandler<CheckoutCommand, ApiRespon
                 // --- 1. Kiểm tra lại từng sản phẩm: còn bán, đủ tồn kho, giá hiện tại (CN-07) ---
                 decimal subTotal = 0;
                 var orderItems = new List<OrderItem>();
+                // (ProductId, CategoryId, LineTotal) — phục vụ kiểm tra phạm vi voucher (§7.5 bước 6).
+                var scopeItems = new List<(Guid ProductId, Guid CategoryId, decimal LineTotal)>();
                 var paymentItems = new List<PaymentItemRequest>();
                 var orderId = Guid.NewGuid();
 
@@ -205,6 +220,7 @@ public class CheckoutCommandHandler : IRequestHandler<CheckoutCommand, ApiRespon
 
                     var itemTotal = product.Price * itemReq.Quantity;
                     subTotal += itemTotal;
+                    scopeItems.Add((product.Id, product.CategoryId, itemTotal));
 
                     orderItems.Add(new OrderItem
                     {
@@ -223,44 +239,113 @@ public class CheckoutCommandHandler : IRequestHandler<CheckoutCommand, ApiRespon
                 // --- 2. Phí vận chuyển (O1): tính trên tạm tính TRƯỚC giảm giá ---
                 var shippingFee = subTotal >= FreeShippingThreshold ? 0m : ShippingFeeAmount;
 
-                // --- 3. Voucher: BE kiểm tra lại toàn bộ, mỗi trường hợp lỗi một thông điệp riêng (O1) ---
+                // --- 3. Voucher + điểm + freeship theo hạng (§7.3/§7.5 + §5.2) ---
+                // Thông tin hội viên (chỉ khi đã đăng nhập): hạng để kiểm tra voucher theo hạng,
+                // freeship theo hạng và trần dùng điểm.
+                User? checkoutUser = null;
+                var tierConfigs = MembershipService.DefaultConfigs();
+                var tierConfig = tierConfigs[0];
+                if (request.UserId.HasValue)
+                {
+                    checkoutUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == request.UserId.Value, cancellationToken);
+                    if (checkoutUser != null)
+                    {
+                        if (checkoutUser.IsLocked)
+                        {
+                            await transaction.RollbackAsync(cancellationToken);
+                            return ApiResponse<CheckoutResultDto>.Fail("Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.");
+                        }
+                        tierConfigs = await MembershipService.GetConfigsAsync(_context, cancellationToken);
+                        tierConfig = MembershipService.ConfigFor(tierConfigs, checkoutUser.MembershipTier);
+                    }
+                }
+                var userTier = checkoutUser?.MembershipTier;
+
                 decimal discountAmount = 0;
                 string? validVoucherCode = null;
                 Voucher? appliedVoucher = null;
+                Voucher? appliedFreeShipVoucher = null;
+                decimal freeShipDiscount = 0;
 
                 if (!string.IsNullOrWhiteSpace(request.VoucherCode))
                 {
                     var vCode = request.VoucherCode.Trim().ToUpperInvariant();
                     var voucher = await _context.Vouchers.FirstOrDefaultAsync(v => v.Code == vCode, cancellationToken);
 
+                    // Các kiểm tra cũ giữ nguyên thông điệp (O1) để không phá FE/test đang dùng.
                     if (voucher == null)
                     {
                         await transaction.RollbackAsync(cancellationToken);
                         return ApiResponse<CheckoutResultDto>.Fail("Mã giảm giá không tồn tại.");
                     }
-
-                    if (!voucher.IsActive)
+                    if (!voucher.IsActive || voucher.Status != "Active")
                     {
                         await transaction.RollbackAsync(cancellationToken);
                         return ApiResponse<CheckoutResultDto>.Fail("Mã giảm giá đã hết hiệu lực.");
                     }
-
+                    if (voucher.StartDate.HasValue && voucher.StartDate.Value > DateTime.UtcNow)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return ApiResponse<CheckoutResultDto>.Fail("Mã giảm giá chưa bắt đầu áp dụng.");
+                    }
                     if (voucher.ExpiryDate.HasValue && voucher.ExpiryDate.Value <= DateTime.UtcNow)
                     {
                         await transaction.RollbackAsync(cancellationToken);
                         return ApiResponse<CheckoutResultDto>.Fail("Mã giảm giá đã hết hạn sử dụng.");
                     }
-
                     if (subTotal < voucher.MinOrderAmount)
                     {
                         await transaction.RollbackAsync(cancellationToken);
                         return ApiResponse<CheckoutResultDto>.Fail($"Đơn hàng tối thiểu cần đạt {voucher.MinOrderAmount:N0}đ để áp dụng mã {voucher.Code}.");
                     }
-
                     if (voucher.MaxUses.HasValue && voucher.UsedCount >= voucher.MaxUses.Value)
                     {
                         await transaction.RollbackAsync(cancellationToken);
                         return ApiResponse<CheckoutResultDto>.Fail("Mã giảm giá đã hết lượt sử dụng.");
+                    }
+                    // Kiểm tra mới (§7.5 bước 4/6/7): voucher cá nhân, lượt/người, hạng, phạm vi.
+                    if (voucher.OwnerUserId.HasValue && (!request.UserId.HasValue || voucher.OwnerUserId.Value != request.UserId.Value))
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return ApiResponse<CheckoutResultDto>.Fail("Mã giảm giá không tồn tại.");
+                    }
+                    if (voucher.MaxUsesPerUser.HasValue && request.UserId.HasValue)
+                    {
+                        var usedByUser = await _context.PromotionUsages.CountAsync(u => u.VoucherId == voucher.Id && u.UserId == request.UserId.Value, cancellationToken);
+                        if (usedByUser >= voucher.MaxUsesPerUser.Value)
+                        {
+                            await transaction.RollbackAsync(cancellationToken);
+                            return ApiResponse<CheckoutResultDto>.Fail("Bạn đã dùng mã này rồi.");
+                        }
+                    }
+                    if (!string.IsNullOrWhiteSpace(voucher.MinTier))
+                    {
+                        if (!request.UserId.HasValue || MembershipService.TierRank(userTier) < MembershipService.TierRank(voucher.MinTier))
+                        {
+                            await transaction.RollbackAsync(cancellationToken);
+                            return ApiResponse<CheckoutResultDto>.Fail($"Mã dành cho hạng {MembershipService.TierLabels.GetValueOrDefault(MembershipService.NormalizeTier(voucher.MinTier), voucher.MinTier)} trở lên.");
+                        }
+                    }
+                    var eligibleSubTotal = subTotal;
+                    if (voucher.ScopeType == "Category" && voucher.ScopeCategoryId.HasValue)
+                    {
+                        eligibleSubTotal = scopeItems.Where(i => i.CategoryId == voucher.ScopeCategoryId.Value).Sum(i => i.LineTotal);
+                        if (eligibleSubTotal <= 0)
+                        {
+                            await transaction.RollbackAsync(cancellationToken);
+                            return ApiResponse<CheckoutResultDto>.Fail("Mã không áp dụng cho sản phẩm trong giỏ.");
+                        }
+                    }
+                    else if (voucher.ScopeType == "Product" && !string.IsNullOrWhiteSpace(voucher.ScopeProductIds))
+                    {
+                        var ids = voucher.ScopeProductIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                            .Select(x => Guid.TryParse(x, out var g) ? g : Guid.Empty).Where(g => g != Guid.Empty).ToHashSet();
+                        eligibleSubTotal = scopeItems.Where(i => ids.Contains(i.ProductId)).Sum(i => i.LineTotal);
+                        if (eligibleSubTotal <= 0)
+                        {
+                            await transaction.RollbackAsync(cancellationToken);
+                            return ApiResponse<CheckoutResultDto>.Fail("Mã không áp dụng cho sản phẩm trong giỏ.");
+                        }
                     }
 
                     appliedVoucher = voucher;
@@ -273,12 +358,12 @@ public class CheckoutCommandHandler : IRequestHandler<CheckoutCommand, ApiRespon
                     }
                     else if (voucher.Code == "FREESHIP" || voucher.DiscountType == "FreeShip")
                     {
-                        // FREESHIP: miễn phí vận chuyển, không giảm trực tiếp vào tạm tính
+                        // FREESHIP ở ô voucher tiền hàng (tương thích cũ): miễn phí vận chuyển, không giảm tạm tính.
                         shippingFee = 0;
                     }
                     else if (voucher.DiscountType == "Percentage")
                     {
-                        discountAmount = subTotal * (voucher.DiscountValue / 100m);
+                        discountAmount = eligibleSubTotal * (voucher.DiscountValue / 100m);
                         if (voucher.MaxDiscountAmount.HasValue && discountAmount > voucher.MaxDiscountAmount.Value)
                         {
                             discountAmount = voucher.MaxDiscountAmount.Value;
@@ -289,13 +374,78 @@ public class CheckoutCommandHandler : IRequestHandler<CheckoutCommand, ApiRespon
                         discountAmount = voucher.DiscountValue;
                     }
 
-                    if (discountAmount > subTotal)
+                    if (discountAmount > eligibleSubTotal)
                     {
-                        discountAmount = subTotal;
+                        discountAmount = eligibleSubTotal;
                     }
                 }
 
-                var totalAmount = subTotal - discountAmount + shippingFee;
+                // Mã freeship thứ hai (stacking §7.3: 1 voucher tiền hàng + 1 freeship).
+                if (!string.IsNullOrWhiteSpace(request.FreeShipVoucherCode))
+                {
+                    var check = await PromotionValidation.ValidateAsync(_context, request.FreeShipVoucherCode,
+                        request.UserId, userTier, subTotal, scopeItems, isFreeShipSlot: true,
+                        goodsVoucherAlreadyApplied: !string.IsNullOrWhiteSpace(request.VoucherCode), cancellationToken);
+                    if (check.Error != null)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return ApiResponse<CheckoutResultDto>.Fail(check.Error);
+                    }
+                    appliedFreeShipVoucher = check.Voucher;
+                    freeShipDiscount = Math.Min(check.ShippingDiscount, shippingFee);
+                    shippingFee -= freeShipDiscount;
+                }
+
+                // Ưu đãi hạng: freeship theo hạng (§5.1) — Bạc từ 199k, Vàng từ 99k, Kim cương mọi đơn.
+                // Tính trên tiền hàng sau giảm voucher (chưa trừ điểm).
+                if (shippingFee > 0 && checkoutUser != null && tierConfig.FreeShipThreshold.HasValue
+                    && (appliedVoucher == null || appliedVoucher.Code != "FORDEV"))
+                {
+                    var goodsAfterVoucher = subTotal - discountAmount;
+                    if (tierConfig.FreeShipThreshold.Value == 0 || goodsAfterVoucher >= tierConfig.FreeShipThreshold.Value)
+                        shippingFee = 0;
+                }
+
+                // --- 3b. Dùng điểm hội viên (§5.2): 1 điểm = 1.000đ, trần % theo hạng, không dùng điểm hết hạn.
+                var pointsUsed = 0;
+                decimal pointsDiscount = 0;
+                if (request.PointsToUse > 0)
+                {
+                    if (checkoutUser == null || !request.UserId.HasValue)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return ApiResponse<CheckoutResultDto>.Fail("Bạn cần đăng nhập để dùng điểm hội viên.");
+                    }
+                    if (appliedVoucher != null && appliedVoucher.Code == "FORDEV")
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return ApiResponse<CheckoutResultDto>.Fail("Không dùng điểm cùng mã FORDEV.");
+                    }
+                    var goodsAfterVoucher = subTotal - discountAmount;
+                    var maxPointsValue = Math.Floor(goodsAfterVoucher * tierConfig.MaxPointsPercent / 100m);
+                    var maxPoints = (int)(maxPointsValue / MembershipService.PointsValueVnd);
+                    if (request.PointsToUse > maxPoints)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return ApiResponse<CheckoutResultDto>.Fail($"Hạng {MembershipService.TierLabels[MembershipService.NormalizeTier(userTier)]} chỉ dùng điểm tối đa {tierConfig.MaxPointsPercent}% giá trị đơn ({maxPoints} điểm).");
+                    }
+                    var balance = await MembershipService.AvailablePointsAsync(_context, checkoutUser.Id, cancellationToken);
+                    if (request.PointsToUse > balance)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return ApiResponse<CheckoutResultDto>.Fail($"Bạn chỉ còn {balance} điểm khả dụng (điểm hết hạn không dùng được).");
+                    }
+                    var deducted = await MembershipService.UsePointsAsync(_context, checkoutUser.Id, orderId, request.PointsToUse, "Dùng điểm thanh toán đơn hàng", cancellationToken);
+                    if (!deducted)
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        return ApiResponse<CheckoutResultDto>.Fail("Không đủ điểm khả dụng.");
+                    }
+                    pointsUsed = request.PointsToUse;
+                    pointsDiscount = pointsUsed * MembershipService.PointsValueVnd;
+                }
+
+                var totalAmount = Math.Max(0, subTotal - discountAmount - pointsDiscount + shippingFee);
 
                 // --- 4. Snapshot giao hàng: ưu tiên khối shipping lồng → địa chỉ trong sổ → địa chỉ phẳng cũ ---
                 var snapshot = await ResolveShippingSnapshotAsync(request, cancellationToken);
@@ -338,6 +488,9 @@ public class CheckoutCommandHandler : IRequestHandler<CheckoutCommand, ApiRespon
                     SubTotal = subTotal,
                     DiscountAmount = discountAmount,
                     VoucherCode = validVoucherCode,
+                    PointsUsed = pointsUsed,
+                    PointsDiscount = pointsDiscount,
+                    FreeShipVoucherCode = appliedFreeShipVoucher?.Code,
                     TotalAmount = totalAmount,
                     Status = OrderStatus.Pending,
                     CreatedAt = now,
@@ -359,10 +512,29 @@ public class CheckoutCommandHandler : IRequestHandler<CheckoutCommand, ApiRespon
                 await _context.Orders.AddAsync(order, cancellationToken);
                 await _context.OrderStatusHistories.AddAsync(history, cancellationToken);
 
-                // Tăng lượt dùng voucher trong cùng transaction (O1)
+                // Tăng lượt dùng voucher trong cùng transaction (O1) + ghi PromotionUsage
+                // để đếm lượt/người và nhả lượt khi hủy/trả đơn.
                 if (appliedVoucher != null)
                 {
                     appliedVoucher.UsedCount++;
+                    if (request.UserId.HasValue)
+                        _context.PromotionUsages.Add(new PromotionUsage
+                        {
+                            Id = Guid.NewGuid(), VoucherId = appliedVoucher.Id,
+                            UserId = request.UserId.Value, OrderId = orderId,
+                            DiscountAmount = discountAmount, CreatedAt = now
+                        });
+                }
+                if (appliedFreeShipVoucher != null)
+                {
+                    appliedFreeShipVoucher.UsedCount++;
+                    if (request.UserId.HasValue)
+                        _context.PromotionUsages.Add(new PromotionUsage
+                        {
+                            Id = Guid.NewGuid(), VoucherId = appliedFreeShipVoucher.Id,
+                            UserId = request.UserId.Value, OrderId = orderId,
+                            DiscountAmount = freeShipDiscount, CreatedAt = now
+                        });
                 }
 
                 // CN-07: xóa các sản phẩm đã đặt khỏi giỏ server của tài khoản
@@ -451,7 +623,9 @@ public class CheckoutCommandHandler : IRequestHandler<CheckoutCommand, ApiRespon
                     expiresAt,
                     orderDisplayCode,
                     paymentMethod,
-                    shippingFee),
+                    shippingFee,
+                    pointsUsed,
+                    pointsDiscount),
                     isPayOs ? "Tạo đơn hàng và link thanh toán PayOS thành công." : "Đặt hàng thành công");
             }
             catch (Exception ex)
@@ -474,7 +648,9 @@ public class CheckoutCommandHandler : IRequestHandler<CheckoutCommand, ApiRespon
         order.ExpiresAt,
         order.OrderDisplayCode,
         order.PaymentMethod,
-        order.ShippingFee);
+        order.ShippingFee,
+        order.PointsUsed,
+        order.PointsDiscount);
 
     private readonly record struct ShippingSnapshot(
         string RecipientName,

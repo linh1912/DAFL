@@ -1695,7 +1695,7 @@ export const FALLBACK_VOUCHERS: Voucher[] = [
 export const FALLBACK_NOTIFICATIONS: NotificationItem[] = [
   {
     id: 'notif-1',
-    title: 'Chào mừng bạn đến với DAFL Store!',
+    title: 'Chào mừng bạn đến với GlowMart!',
     message: 'Nhận ngay voucher DAFL20 giảm 20.000đ cho đơn hàng đầu tiên hôm nay.',
     type: 'Promotion',
     isRead: false,
@@ -1704,7 +1704,7 @@ export const FALLBACK_NOTIFICATIONS: NotificationItem[] = [
   {
     id: 'notif-2',
     title: 'Flash Sale Cuối Tuần',
-    message: 'Hàng trăm sản phẩm trong 26 ngành hàng đang giảm giá tới 50%!',
+    message: 'Mỹ phẩm chính hãng giảm đến 50%!',
     type: 'Promotion',
     isRead: true,
     createdAt: new Date(Date.now() - 3600000).toISOString()

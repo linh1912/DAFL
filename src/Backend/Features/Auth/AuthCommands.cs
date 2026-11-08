@@ -267,6 +267,15 @@ public class LoginCommandHandler : IRequestHandler<LoginCommand, ApiResponse<Aut
             return ApiResponse<AuthResultDto>.Fail("Email hoặc mật khẩu không đúng");
         }
 
+        // Tài khoản bị admin khóa (§3): không đăng nhập được.
+        if (user.IsLocked)
+        {
+            return ApiResponse<AuthResultDto>.Fail("Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.");
+        }
+
+        user.LastLoginAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync(cancellationToken);
+
         var authResult = await AuthTokenFactory.CreateAuthResultAsync(_context, _jwtService, user, cancellationToken);
 
         var loginNotif = new NotificationDto(

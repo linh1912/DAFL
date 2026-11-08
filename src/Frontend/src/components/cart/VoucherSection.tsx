@@ -25,12 +25,12 @@ export const VoucherSection: React.FC<VoucherSectionProps> = ({
   return (
     <div className="voucher-section" data-testid="voucher-section">
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: '0.85rem', fontWeight: 700, color: 'var(--primary)' }}>
-        <Tag size={15} /> Nhập mã giảm giá / Voucher:
+        <Tag size={15} /> Mã giảm giá
       </div>
       <div className="voucher-input-group">
         <input
           className="form-input"
-          placeholder="Nhập mã voucher (VD: FORDEV, DAFL10)..."
+          placeholder="Nhập mã voucher (VD: DAFL10)…"
           value={voucherCodeInput}
           onChange={e => setVoucherCodeInput(e.target.value.toUpperCase())}
           data-testid="voucher-code-input"

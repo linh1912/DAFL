@@ -1,8 +1,9 @@
 import React from 'react';
-import { Star, Plus } from 'lucide-react';
+import { Star, Plus, Store } from 'lucide-react';
 import { Product } from '../../types';
 import { formatPrice } from '../../utils/formatters';
 import { IMAGE_PLACEHOLDER } from '../../utils/images';
+import { shopNameFor } from '../../utils/shops';
 
 export interface ProductCardProps {
   product: Product;
@@ -48,6 +49,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         <h3 className="product-name" data-testid={`product-name-${product.id}`}>
           {product.name}
         </h3>
+        <div className="product-shop" data-testid={`product-shop-${product.id}`}>
+          <Store size={12} /> {shopNameFor(product)}
+        </div>
 
         <div className="product-meta">
           <span className="product-rating">
@@ -69,7 +73,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             )}
           </div>
           <div className="product-stock" data-testid={`product-stock-${product.id}`}>
-            {isOutOfStock ? 'Hết hàng' : `Còn ${product.availableStock} sản phẩm`}
+            {isOutOfStock ? 'Hết hàng' : `Còn ${product.availableStock}`}
           </div>
           <button
             className="btn btn-primary product-add-btn"

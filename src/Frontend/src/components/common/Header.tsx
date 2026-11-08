@@ -44,7 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   return (
     <>
-      <div className="dafl-topbar" aria-label="Ưu đãi DAFL">
+      <div className="dafl-topbar" aria-label="Ưu đãi GlowMart">
         <span>MIỄN PHÍ VẬN CHUYỂN CHO ĐƠN TỪ 299.000Đ</span>
         <span>ĐỔI TRẢ TRONG 30 NGÀY</span>
         <span>HÀNG CHÍNH HÃNG 100%</span>
@@ -56,10 +56,10 @@ export const Header: React.FC<HeaderProps> = ({
         className="brand"
         data-testid="brand-logo"
       >
-        <span className="brand-mark">D</span>
+        <span className="brand-mark">G</span>
         <span className="brand-name">
-          DAFL
-          <small>MỸ PHẨM CHỌN LỌC</small>
+          GlowMart
+          <small>SÀN MỸ PHẨM ĐA GIAN HÀNG</small>
         </span>
       </a>
 
@@ -69,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
         <input
           type="text"
           className="search-input"
-          placeholder="Tìm kiếm sản phẩm, thương hiệu và nhu cầu làm đẹp..."
+          placeholder="Tìm son, serum, kem chống nắng…"
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           data-testid="search-input"
@@ -89,10 +89,10 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Header Actions */}
       <div className="header-actions">
-        <nav className="header-utilities" aria-label="Tiện ích DAFL">
+        <nav className="header-utilities" aria-label="Tiện ích GlowMart">
           <button type="button" className="header-utility" onClick={() => onNavigate('home')}>
             <Store size={20} />
-            <span>Cửa hàng</span>
+            <span>Gian hàng</span>
           </button>
           <button type="button" className="header-utility" onClick={() => onNavigate('home')}>
             <Newspaper size={20} />
@@ -151,7 +151,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {user ? user.fullName : 'Khách hàng'}
                 </div>
                 <div className="dropdown-user-role">
-                  {user ? (user.role === 'Admin' ? 'Quản trị viên' : 'Thành viên DAFL') : 'Chưa đăng nhập'}
+                  {user ? (user.role === 'Admin' ? 'Quản trị viên' : 'Thành viên GlowMart') : 'Chưa đăng nhập'}
                 </div>
               </div>
 

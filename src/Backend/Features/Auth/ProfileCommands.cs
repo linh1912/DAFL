@@ -115,8 +115,10 @@ public class ChangePasswordCommandHandler : IRequestHandler<ChangePasswordComman
         }
 
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        // Vô hiệu mọi JWT đang sống (tài liệu §2.2): TokenVersion tăng → middleware từ chối token cũ.
+        user.TokenVersion++;
         await _context.SaveChangesAsync(cancellationToken);
 
-        return ApiResponse<string>.Ok("Đổi mật khẩu thành công");
+        return ApiResponse<string>.Ok("Đổi mật khẩu thành công. Vui lòng đăng nhập lại trên mọi thiết bị.");
     }
 }

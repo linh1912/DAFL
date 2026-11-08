@@ -1,3 +1,4 @@
+using DAFL.Backend.Features.Membership;
 using DAFL.Backend.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -48,7 +49,18 @@ public class ReservationCleanupWorker : BackgroundService
                             }
                         }
 
+                        // Đơn hết hạn giữ kho: nhả lượt voucher + hoàn điểm đã dùng (đúng 1 lần, §11.2).
+                        await MembershipService.ReleaseOrderBenefitsAsync(context, order, stoppingToken);
                         order.Status = OrderStatus.Expired;
+                        context.OrderStatusHistories.Add(new OrderStatusHistory
+                        {
+                            Id = Guid.NewGuid(),
+                            OrderId = order.Id,
+                            Status = OrderStatus.Expired,
+                            PreviousStatus = OrderStatus.Pending,
+                            Note = "Hết hạn giữ kho 15 phút (PayOS chưa thanh toán) — đã nhả kho, voucher và điểm.",
+                            Timestamp = DateTime.UtcNow
+                        });
                         _logger.LogInformation("Released reserved stock for Expired Order #{OrderCode}.", order.OrderCode);
                     }
 

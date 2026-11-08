@@ -61,7 +61,15 @@ public class GetOrderDetailQueryHandler : IRequestHandler<GetOrderDetailQuery, A
             order.ShipWardName,
             order.ShipDetailAddress,
             order.ShipNote,
-            order.AddressBookId);
+            order.AddressBookId,
+            order.PointsUsed,
+            order.PointsDiscount,
+            order.PointsEarned,
+            order.FreeShipVoucherCode,
+            order.TrackingCode,
+            order.Carrier,
+            order.DeliveredAt,
+            order.CompletedAt);
 
         return ApiResponse<OrderHistoryDto?>.Ok(dto);
     }

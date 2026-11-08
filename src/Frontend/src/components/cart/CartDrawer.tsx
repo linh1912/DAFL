@@ -138,8 +138,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             {checkoutResult
               ? isCodSuccess
                 ? 'Đặt hàng thành công'
-                : 'Thanh toán đơn hàng PayOS (Trực tiếp)'
-              : 'Giỏ hàng & Đơn hàng của bạn'}
+                : 'Thanh toán PayOS'
+              : 'Giỏ hàng'}
           </h2>
         </div>
         {isModal && (
@@ -156,7 +156,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <div className="cart-empty-box" style={{ textAlign: 'center', padding: '60px 0', color: '#9ca3af' }} data-testid="cart-empty-state">
               <ShoppingBag size={56} style={{ margin: '0 auto 16px', opacity: 0.3 }} />
               <h3 style={{ fontSize: '1.2rem', marginBottom: 8, color: 'var(--text-main)' }}>Giỏ hàng trống</h3>
-              <p style={{ marginBottom: 20 }}>Khám phá các sản phẩm hot deal giá sốc tại DAFL Store!</p>
+              <p style={{ marginBottom: 20 }}>Khám phá deal mỹ phẩm ngay.</p>
               <button
                 type="button"
                 className="btn btn-primary"
@@ -205,6 +205,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <div className="cart-right-col">
                 {/* Pricing Summary */}
                 <div
+                  className="cart-summary-card"
                   style={{
                     background: 'var(--bg-subtle)',
                     border: '1px solid var(--border-subtle)',
@@ -217,6 +218,27 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <h4 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: 12, color: 'var(--text-main)' }}>
                     Tóm tắt đơn hàng
                   </h4>
+                  {/* Tiến độ freeship (đơn ≥ 299.000đ) */}
+                  {(() => {
+                    const FREE_SHIP_AT = 299000;
+                    const remaining = Math.max(0, FREE_SHIP_AT - rawSubTotal);
+                    const pct = Math.min(100, Math.round((rawSubTotal / FREE_SHIP_AT) * 100));
+                    return (
+                      <div className="freeship-progress" data-testid="cart-freeship-progress">
+                        <div className="freeship-progress-label">
+                          {remaining === 0 ? (
+                            <span>🎉 Đã được freeship</span>
+                          ) : (
+                            <span>Thêm <strong>{formatPrice(remaining)}</strong> để freeship</span>
+                          )}
+                          <span>{pct}%</span>
+                        </div>
+                        <div className="freeship-progress-track">
+                          <div className="freeship-progress-fill" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: '0.9rem', color: 'var(--text-muted)' }}>
                     <span>Tạm tính ({totalItemCount} sản phẩm):</span>
                     <span data-testid="cart-raw-subtotal">{formatPrice(rawSubTotal)}</span>

@@ -39,7 +39,7 @@ describe('Search & Filter Module', () => {
 
     const searchInput = screen.getByTestId('search-input');
     expect(searchInput).toBeInTheDocument();
-    expect(searchInput).toHaveAttribute('placeholder', expect.stringContaining('Tìm kiếm sản phẩm'));
+    expect(searchInput).toHaveAttribute('placeholder', expect.stringContaining('Tìm son'));
   });
 
   it('TC_SEARCH_02: Should trigger setSearchQuery when typing keyword', () => {
@@ -109,7 +109,7 @@ describe('Search & Filter Module', () => {
     );
 
     expect(screen.getByTestId('category-pill-all')).toHaveClass('active');
-    expect(screen.getByTestId('category-pill-cat-1')).toHaveTextContent('Điện thoại & Tablet');
+    expect(screen.getByTestId('category-pill-cat-1')).toHaveTextContent('Điện thoại');
     expect(screen.getByTestId('category-pill-cat-2')).toHaveTextContent('Thời trang nam');
     expect(screen.getByTestId('category-pill-cat-3')).toHaveTextContent('Đồ gia dụng');
   });

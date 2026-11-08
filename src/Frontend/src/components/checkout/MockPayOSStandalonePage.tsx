@@ -11,7 +11,7 @@ export const MockPayOSStandalonePage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
-  const qrUrl = `https://img.vietqr.io/image/MB-0987654321-compact2.png?amount=${amount}&addInfo=DH%20${orderCode}&accountName=DAFL%20STORE`;
+  const qrUrl = `https://img.vietqr.io/image/MB-0987654321-compact2.png?amount=${amount}&addInfo=DH%20${orderCode}&accountName=GLOWMART`;
 
   const copy = (text: string, key: string) => {
     navigator.clipboard?.writeText(text);
