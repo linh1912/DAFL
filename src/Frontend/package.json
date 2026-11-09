@@ -6,8 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:web": "tsc && vite build",
+    "build:admin": "tsc && vite build --mode admin",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:web": "vitest run --exclude src/test/AdminPage.test.tsx --exclude src/test/AdminOnlyMode.test.tsx",
+    "test:admin": "vitest run src/test/AdminPage.test.tsx src/test/AdminOnlyMode.test.tsx",
     "test:watch": "vitest"
   },
   "dependencies": {

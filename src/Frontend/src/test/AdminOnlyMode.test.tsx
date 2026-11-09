@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
@@ -114,6 +114,29 @@ describe('Admin-only mode (VITE_ADMIN_ONLY=true)', () => {
     expect(screen.queryByText('Tài khoản mặc định: admin / Admin@123')).not.toBeInTheDocument();
     expect(screen.getByTestId('login-password-input')).toHaveAttribute('autoComplete', 'new-password');
     expect(screen.getByTestId('login-email-input')).toHaveAttribute('autoComplete', 'off');
+  });
+
+  it('admin-only /admin: topbar mới không còn nút Tạo mới / ô tìm kiếm, không breadcrumb', async () => {
+    const { default: App } = await import('../App');
+    render(
+      <MemoryRouter initialEntries={['/admin']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-page')).toBeInTheDocument();
+    });
+    const topbar = screen.getByRole('banner');
+    expect(within(topbar).queryByRole('textbox')).toBeNull();
+    expect(within(topbar).queryByText(/Tạo mới/)).toBeNull();
+    expect(screen.queryByText('+ Tạo mới')).toBeNull();
+    expect(screen.queryByText(/Trang chủ\s*\//)).toBeNull();
+    expect(document.querySelector('.sa-breadcrumb, [class*="breadcrumb"]')).toBeNull();
+    // Topbar vẫn còn các nút điều khiển của nó.
+    expect(screen.getByLabelText('Thu gọn / mở menu')).toBeInTheDocument();
+    expect(screen.getByLabelText('Thông báo')).toBeInTheDocument();
+    expect(screen.getByLabelText('Menu tài khoản')).toBeInTheDocument();
   });
 
   it('admin-only /login: nhập "admin" được map sang admin@dafl.vn khi gọi API đăng nhập', async () => {

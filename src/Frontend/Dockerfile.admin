@@ -1,0 +1,27 @@
+# Stage 1: Build React App (bản ADMIN-RIÊNG, cố định)
+FROM node:20-alpine AS build
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . ./
+# Bản admin cố định: không dùng ARG như Dockerfile (shop) nữa.
+# - ENV VITE_ADMIN_ONLY=true: Vite đọc biến VITE_* lúc build, app chỉ render
+#   trang quản trị (route / -> /admin), chạy ở localhost:3001 (service dafl-admin).
+# - Script build:admin (package.json) build với `vite build --mode admin` nên
+#   Vite nạp thêm file .env.admin (cùng nội dung cờ này, không chứa secret);
+#   ENV ở đây là lớp dự phòng nếu thiếu file .env.admin trong context.
+ENV VITE_ADMIN_ONLY=true
+
+RUN npm run build:admin
+
+# Stage 2: Serve with Nginx Alpine
+FROM nginx:1.25-alpine AS runtime
+
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

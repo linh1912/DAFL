@@ -218,6 +218,14 @@ describe('AdminPage', () => {
       expect(screen.getByTestId('admin-product-form')).toBeInTheDocument();
     });
     expect(screen.queryByTestId('admin-product-detail')).not.toBeInTheDocument();
+    // Form sửa giờ mở trong MODAL (không còn inline trên bảng): modal có overlay
+    // che phủ, form nằm bên trong modal, bảng vẫn còn trong DOM phía dưới.
+    const formModal = screen.getByTestId('admin-product-form-modal');
+    expect(formModal).toHaveAttribute('role', 'dialog');
+    expect(formModal).toHaveClass('sa-modal');
+    expect(formModal.closest('.sa-modal-overlay')).not.toBeNull();
+    expect(within(formModal).getByTestId('admin-product-form')).toBeInTheDocument();
+    expect(screen.getByText('Son kem 3CE')).toBeInTheDocument();
   });
 
   it('Danh mục: bấm mắt mở modal chi tiết + nút Sửa mở form', async () => {
@@ -265,5 +273,392 @@ describe('AdminPage', () => {
     const modal = within(screen.getByTestId('admin-category-detail'));
     expect(modal.getByText('son-moi')).toBeInTheDocument();
     expect(modal.getByText('Son các loại')).toBeInTheDocument();
+    // Nút Sửa trong modal chi tiết mở form sửa — form giờ nằm trong MODAL.
+    fireEvent.click(modal.getByText('Sửa danh mục'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-category-form-modal')).toBeInTheDocument();
+    });
+    expect(within(screen.getByTestId('admin-category-form-modal')).getByTestId('admin-category-form')).toBeInTheDocument();
+    expect(screen.queryByTestId('admin-category-detail')).not.toBeInTheDocument();
+  });
+
+  // ---------- Helper cho các test giao diện mới (toolbar / phân trang / modal) ----------
+  const adminProfile = { id: 'admin-1', email: 'admin@dafl.vn', fullName: 'Super Admin', role: 'SuperAdmin' };
+
+  /** Mock fetch cho trang Admin: profile/dashboard/revenue mặc định + `extra` cho từng endpoint. */
+  function mockFetchAdmin(extra?: (urlStr: string) => unknown) {
+    globalThis.fetch = vi.fn((url: any) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('/api/admin/profile')) return respond(200, { success: true, data: adminProfile });
+      if (urlStr.includes('/api/admin/dashboard')) {
+        return respond(200, {
+          success: true,
+          data: { revenueToday: 0, revenueThisMonth: 0, pendingOrders: 0, newCustomers30d: 0, ordersByStatus: {}, lowStockProducts: [], expiringVouchers: [] },
+        });
+      }
+      if (urlStr.includes('/api/admin/reports/revenue')) {
+        return respond(200, {
+          success: true,
+          data: { byDay: [], topProducts: [], totalOrders: 0, cancelledOrders: 0, cancelRate: 0, voucherOrders: 0, voucherUsageRate: 0 },
+        });
+      }
+      if (extra) {
+        const data = extra(urlStr);
+        if (data !== undefined) return respond(200, { success: true, data });
+      }
+      return respond(200, { success: true, data: [] });
+    });
+  }
+
+  const mkProducts = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `p${i + 1}`, categoryId: 'c1', categoryName: 'Son môi',
+      name: `Sản phẩm ${String(i + 1).padStart(2, '0')}`,
+      price: 100000 + i * 1000, originalPrice: 150000, availableStock: 10,
+      imageUrl: '', rating: 4.5, reviewCount: 3,
+    }));
+
+  const mkOrders = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `o${i + 1}`, orderDisplayCode: `DH-${1001 + i}`, orderCode: 1001 + i,
+      customerName: `Khách ${String(i + 1).padStart(2, '0')}`,
+      customerEmail: `khach${i + 1}@example.com`,
+      status: 'Pending', paymentMethod: 'COD', totalAmount: 500000, createdAt: '2026-11-08T10:00:00Z',
+    }));
+
+  const mkCategories = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `c${i + 1}`, name: `Danh mục ${String(i + 1).padStart(2, '0')}`,
+      slug: `danh-muc-${i + 1}`, description: `Mô tả ${i + 1}`,
+      isActive: true, sortOrder: i + 1, productCount: 0,
+    }));
+
+  const mkReturns = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `r${i + 1}`, orderId: `o${i + 1}`, orderDisplayCode: `DH-${2000 + i}`,
+      productId: 'p1', productName: `SP trả ${String(i + 1).padStart(2, '0')}`,
+      quantity: 1, reason: 'Lỗi sản phẩm', status: 'Pending', createdAt: '2026-11-08T10:00:00Z',
+    }));
+
+  const mkAudit = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `a${i + 1}`, actorEmail: 'admin@dafl.vn',
+      action: `Cập nhật đơn DH-${2000 + i}`, entityType: 'Order',
+      entityId: `o${i + 1}`, createdAt: '2026-11-08T10:00:00Z',
+    }));
+
+  const mkTiers = () => [
+    { tier: 'Member', minSpent: 0, spendPerPoint: 10000, maxPointsPercent: 10, freeShipThreshold: 299000 },
+    { tier: 'Silver', minSpent: 5000000, spendPerPoint: 10000, maxPointsPercent: 15, freeShipThreshold: 299000 },
+    { tier: 'Gold', minSpent: 15000000, spendPerPoint: 8000, maxPointsPercent: 20, freeShipThreshold: 199000 },
+    { tier: 'Diamond', minSpent: 30000000, spendPerPoint: 5000, maxPointsPercent: 30, freeShipThreshold: 0 },
+  ];
+
+  it('Topbar mới: không còn nút Tạo mới / ô tìm kiếm; không còn breadcrumb', async () => {
+    mockFetchFor({
+      status: 200,
+      body: { success: true, data: adminProfile },
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-dashboard')).toBeInTheDocument();
+    });
+    const topbar = screen.getByRole('banner');
+    // Topbar chỉ còn: thu gọn sidebar, toàn màn hình, chuông, avatar/tên.
+    expect(within(topbar).queryByRole('textbox')).toBeNull();
+    expect(within(topbar).queryByText(/Tạo mới/)).toBeNull();
+    expect(screen.queryByText('+ Tạo mới')).toBeNull();
+    expect(screen.getByLabelText('Thu gọn / mở menu')).toBeInTheDocument();
+    expect(screen.getByLabelText('Thông báo')).toBeInTheDocument();
+    expect(screen.getByLabelText('Menu tài khoản')).toBeInTheDocument();
+    // Breadcrumb "Trang chủ / Quản trị / ..." đã bỏ ở mọi mục.
+    expect(screen.queryByText(/Trang chủ\s*\//)).toBeNull();
+    expect(document.querySelector('.sa-breadcrumb, [class*="breadcrumb"]')).toBeNull();
+  });
+
+  it('Toolbar Sản phẩm: nút Thêm mới ở TRÁI (class sa-btn-add), tìm kiếm + Đặt lại + Làm mới ở PHẢI', async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/products')) return mkProducts(1);
+      if (urlStr.includes('/api/admin/categories')) return mkCategories(1);
+      return undefined;
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-products')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-products'));
+    await waitFor(() => {
+      expect(screen.getByText('Sản phẩm 01')).toBeInTheDocument();
+    });
+    const addBtn = screen.getByTestId('admin-product-add-btn');
+    expect(addBtn).toHaveTextContent('+ Thêm sản phẩm');
+    expect(addBtn).toHaveClass('sa-btn-add');
+    expect(addBtn.closest('.sa-toolbar-left')).not.toBeNull();
+    expect(screen.getByTestId('admin-product-search').closest('.sa-toolbar-right')).not.toBeNull();
+    expect(screen.getByTestId('admin-products-reset-btn').closest('.sa-toolbar-right')).not.toBeNull();
+    expect(screen.getByTestId('admin-products-refresh-btn').closest('.sa-toolbar-right')).not.toBeNull();
+    expect(screen.getByTestId('admin-products-pagination')).toBeInTheDocument();
+  });
+
+  it('Toolbar Đơn hàng: không có nút Thêm mới; có tìm kiếm + Tìm + Đặt lại + Làm mới + Export ở phải', async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/admin/orders')) return mkOrders(1);
+      return undefined;
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-orders')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-orders'));
+    await waitFor(() => {
+      expect(screen.getByText('Khách 01')).toBeInTheDocument();
+    });
+    expect(document.querySelector('.sa-toolbar .sa-btn-add')).toBeNull();
+    expect(screen.getByTestId('admin-order-search').closest('.sa-toolbar-right')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Tìm' })).toBeInTheDocument();
+    expect(screen.getByTestId('admin-orders-reset-btn').closest('.sa-toolbar-right')).not.toBeNull();
+    expect(screen.getByTestId('admin-orders-refresh-btn').closest('.sa-toolbar-right')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Export/ })).toBeInTheDocument();
+  });
+
+  it('Phân trang Sản phẩm: 12 SP → 2 trang, bấm Sau/Trước và số trang đổi "Trang X / Y"', async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/products')) return mkProducts(12);
+      if (urlStr.includes('/api/admin/categories')) return mkCategories(1);
+      return undefined;
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-products')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-products'));
+    await waitFor(() => {
+      expect(screen.getByText('Sản phẩm 01')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Trang 1 \/ 2/)).toBeInTheDocument();
+    expect(screen.getByText(/Tổng 12 dòng/)).toBeInTheDocument();
+    expect(screen.getByTestId('admin-products-pagination-prev')).toBeDisabled();
+    expect(screen.queryByText('Sản phẩm 11')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('admin-products-pagination-next'));
+    await waitFor(() => {
+      expect(screen.getByText(/Trang 2 \/ 2/)).toBeInTheDocument();
+    });
+    expect(screen.getByText('Sản phẩm 11')).toBeInTheDocument();
+    expect(screen.getByText('Sản phẩm 12')).toBeInTheDocument();
+    expect(screen.queryByText('Sản phẩm 01')).toBeNull();
+    expect(screen.getByTestId('admin-products-pagination-next')).toBeDisabled();
+
+    // Bấm số trang 1 để quay lại.
+    fireEvent.click(screen.getByTestId('admin-products-pagination-page-1'));
+    await waitFor(() => {
+      expect(screen.getByText(/Trang 1 \/ 2/)).toBeInTheDocument();
+    });
+    expect(screen.getByText('Sản phẩm 01')).toBeInTheDocument();
+    expect(screen.queryByText('Sản phẩm 11')).toBeNull();
+  });
+
+  it('Phân trang Đơn hàng: 15 đơn → tối đa 2 trang (API trả tối đa 20 dòng)', async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/admin/orders')) return mkOrders(15);
+      return undefined;
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-orders')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-orders'));
+    await waitFor(() => {
+      expect(screen.getByText('Khách 01')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Trang 1 \/ 2/)).toBeInTheDocument();
+    expect(screen.getByText(/Tổng 15 dòng/)).toBeInTheDocument();
+    expect(screen.getByTestId('admin-orders-pagination-prev')).toBeDisabled();
+    expect(screen.queryByText('Khách 11')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('admin-orders-pagination-next'));
+    await waitFor(() => {
+      expect(screen.getByText(/Trang 2 \/ 2/)).toBeInTheDocument();
+    });
+    expect(screen.getByText('Khách 11')).toBeInTheDocument();
+    expect(screen.getByText('Khách 15')).toBeInTheDocument();
+    expect(screen.queryByText('Khách 01')).toBeNull();
+    expect(screen.getByTestId('admin-orders-pagination-next')).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId('admin-orders-pagination-prev'));
+    await waitFor(() => {
+      expect(screen.getByText(/Trang 1 \/ 2/)).toBeInTheDocument();
+    });
+    expect(screen.getByText('Khách 01')).toBeInTheDocument();
+  });
+
+  it('Form Sản phẩm: bấm Thêm mới mở MODAL (bảng vẫn trong DOM phía dưới)', async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/products')) return mkProducts(1);
+      if (urlStr.includes('/api/admin/categories')) return mkCategories(1);
+      return undefined;
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-products')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-products'));
+    await waitFor(() => {
+      expect(screen.getByText('Sản phẩm 01')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('admin-product-form-modal')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('admin-product-add-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-product-form-modal')).toBeInTheDocument();
+    });
+    const formModal = screen.getByTestId('admin-product-form-modal');
+    expect(formModal).toHaveAttribute('role', 'dialog');
+    expect(formModal).toHaveClass('sa-modal');
+    expect(formModal.closest('.sa-modal-overlay')).not.toBeNull();
+    const form = within(formModal).getByTestId('admin-product-form');
+    expect(form).toBeInTheDocument();
+    expect(within(formModal).getByTestId('admin-product-name-input')).toBeInTheDocument();
+    expect(within(formModal).getByTestId('admin-product-price-input')).toBeInTheDocument();
+    // Modal chỉ che phủ bảng, không gỡ bảng khỏi DOM.
+    expect(screen.getByText('Sản phẩm 01')).toBeInTheDocument();
+  });
+
+  it('Form Danh mục: bấm Thêm mới mở MODAL', async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/admin/categories')) return mkCategories(1);
+      return undefined;
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-categories')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-categories'));
+    await waitFor(() => {
+      expect(screen.getByText('Danh mục 01')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('admin-category-form-modal')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('admin-category-add-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-category-form-modal')).toBeInTheDocument();
+    });
+    const formModal = screen.getByTestId('admin-category-form-modal');
+    expect(formModal).toHaveAttribute('role', 'dialog');
+    expect(formModal.closest('.sa-modal-overlay')).not.toBeNull();
+    expect(within(formModal).getByTestId('admin-category-form')).toBeInTheDocument();
+    expect(within(formModal).getByTestId('admin-category-name-input')).toBeInTheDocument();
+    expect(screen.getByText('Danh mục 01')).toBeInTheDocument();
+  });
+
+  it('Form Khuyến mãi: bấm Tạo khuyến mãi mở MODAL', async () => {
+    mockFetchAdmin();
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-promotions')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-promotions'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-promo-add-btn')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Chưa có khuyến mãi.')).toBeInTheDocument();
+    expect(screen.queryByTestId('admin-promo-form-modal')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('admin-promo-add-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-promo-form-modal')).toBeInTheDocument();
+    });
+    const formModal = screen.getByTestId('admin-promo-form-modal');
+    expect(formModal).toHaveAttribute('role', 'dialog');
+    expect(formModal.closest('.sa-modal-overlay')).not.toBeNull();
+    expect(within(formModal).getByTestId('admin-promo-form')).toBeInTheDocument();
+    expect(within(formModal).getByTestId('admin-promo-code-input')).toBeInTheDocument();
+  });
+
+  it('Hội viên: form điều chỉnh điểm VẪN inline (không modal); bảng 4 hạng không phân trang', async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/admin/membership/config')) return mkTiers();
+      return undefined;
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-membership')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-membership'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-adjust-points-form')).toBeInTheDocument();
+    });
+    const form = screen.getByTestId('admin-adjust-points-form');
+    expect(form.closest('.sa-modal')).toBeNull();
+    expect(form.closest('.sa-modal-overlay')).toBeNull();
+    expect(screen.getByTestId('admin-adjust-user-input')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-adjust-points-input')).toBeInTheDocument();
+    // Bảng hạng chỉ 4 dòng nên không có phân trang; toolbar vẫn có Đặt lại/Làm mới.
+    expect(screen.getByText('Thường (Member)')).toBeInTheDocument();
+    expect(screen.getByText('Kim cương (Diamond)')).toBeInTheDocument();
+    expect(screen.queryByTestId('admin-members-pagination')).toBeNull();
+    expect(screen.queryByTestId('admin-membership-pagination')).toBeNull();
+    expect(screen.getByTestId('admin-members-reset-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-members-refresh-btn')).toBeInTheDocument();
+  });
+
+  it('Tổng quan: không có toolbar chuẩn, không có phân trang', async () => {
+    mockFetchFor({
+      status: 200,
+      body: { success: true, data: adminProfile },
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-dashboard')).toBeInTheDocument();
+    });
+    expect(document.querySelector('.sa-toolbar')).toBeNull();
+    expect(screen.queryByTestId('admin-orders-pagination')).toBeNull();
+    expect(screen.queryByTestId('admin-products-pagination')).toBeNull();
+    expect(screen.queryByTestId('admin-orders-reset-btn')).toBeNull();
+    expect(screen.queryByTestId('admin-orders-refresh-btn')).toBeNull();
+  });
+
+  it('Trả hàng / Nhật ký: toolbar reset/refresh + phân trang riêng cho 2 bảng', async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/admin/audit-log')) return mkAudit(12);
+      if (urlStr.includes('/api/admin/returns')) return mkReturns(12);
+      return undefined;
+    });
+    renderAdmin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-returns')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-returns'));
+    await waitFor(() => {
+      expect(screen.getByText('SP trả 01')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('admin-returns-reset-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-returns-refresh-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-returns-audit-reset-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-returns-audit-refresh-btn')).toBeInTheDocument();
+    const returnsPaging = screen.getByTestId('admin-returns-pagination');
+    const auditPaging = screen.getByTestId('admin-returns-audit-pagination');
+    expect(within(returnsPaging).getByText(/Trang 1 \/ 2/)).toBeInTheDocument();
+    expect(within(auditPaging).getByText(/Trang 1 \/ 2/)).toBeInTheDocument();
+    expect(screen.queryByText('SP trả 11')).toBeNull();
+
+    // Chuyển trang bảng trả hàng không ảnh hưởng bảng nhật ký.
+    fireEvent.click(screen.getByTestId('admin-returns-pagination-next'));
+    await waitFor(() => {
+      expect(within(returnsPaging).getByText(/Trang 2 \/ 2/)).toBeInTheDocument();
+    });
+    expect(screen.getByText('SP trả 11')).toBeInTheDocument();
+    expect(within(auditPaging).getByText(/Trang 1 \/ 2/)).toBeInTheDocument();
   });
 });

@@ -106,9 +106,7 @@ services:
   admin:
     build:
       context: ./src/Frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_ADMIN_ONLY: "true"
+      dockerfile: Dockerfile.admin
     container_name: dafl-admin
     restart: unless-stopped
     ports:

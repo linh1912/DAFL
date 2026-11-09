@@ -13,7 +13,8 @@ pipeline {
     }
 
     environment {
-        REPO_URL        = 'https://github.com/sonismyname/DAFL.git'
+        REPO_URL        = 'https://github.com/linh1912/DAFL.git'
+        TEST_REPO_URL   = 'https://github.com/linh1912/DAFL_DO_AN_TOT_NGHIEP.git'
         TARGET_BRANCH   = 'develop'
         WORKTREE_DIR    = 'build-worktree'
         PROJECT_NAME    = 'dafl'
@@ -50,6 +51,10 @@ pipeline {
 
                     echo "Danh sách worktrees hiện tại:"
                     git worktree list
+
+                    # Lay repo test rieng (suite web/admin tach rieng o do) vao worktree
+                    rm -rf ${WORKTREE_DIR}/dafl-tests || true
+                    git clone --depth 1 -b main ${TEST_REPO_URL} ${WORKTREE_DIR}/dafl-tests
                 """
             }
         }
@@ -60,7 +65,7 @@ pipeline {
                 dir(env.WORKTREE_DIR) {
                     sh """
                         # Build container backend và frontend phiên bản mới nhất
-                        docker compose -p ${PROJECT_NAME} -f docker-compose.yml build backend frontend
+                        docker compose -p ${PROJECT_NAME} -f docker-compose.yml build backend frontend admin
 
                         # Chạy toàn bộ services (Postgres, Kafka, Backend, Frontend)
                         docker compose -p ${PROJECT_NAME} -f docker-compose.yml up -d
@@ -87,10 +92,19 @@ pipeline {
             }
         }
 
-        stage('Stage 2: Functional Regression') {
+        // Tách web/admin (nối tiếp, KHÔNG song song): 2 stage chạy chung 1 workspace.
+        // Suite test (testng-web.xml / testng-admin.xml) lay tu repo test rieng
+        // linh1912/DAFL_DO_AN_TOT_NGHIEP (clone vao build-worktree/dafl-tests o Stage 1);
+        // thu muc tests/functional-selenium cu trong repo nay khong con duoc pipeline dung.
+        // nên chạy song song sẽ đụng nhau ở target/surefire-reports. Stage Web dọn
+        // sạch rồi chạy testng-web.xml; stage Admin chạy NỐI TIẾP, KHÔNG `mvn clean`
+        // và không xóa target/ — để target/surefire-reports giữ kết quả của CẢ 2
+        // suite cho stage 'Functional Quality Gate' phía sau kiểm tra (nếu Admin
+        // clean thì kết quả web bị xóa và Quality Gate chỉ còn thấy admin).
+        stage('Functional Regression - Web') {
             steps {
-                echo "=== Stage 2: Chạy Maven Selenium Headless (RAM Limit: 1.2GB) ==="
-                dir("${env.WORKTREE_DIR}/tests/functional-selenium") {
+                echo "=== Functional Regression - Web: Chạy Maven Selenium Headless, suite web (RAM Limit: 1.2GB) ==="
+                dir("${env.WORKTREE_DIR}/dafl-tests/automation") {
                     sh """
                         # Dọn dẹp kết quả test cũ
                         rm -rf target/surefire-reports target/allure-results || true
@@ -105,21 +119,73 @@ pipeline {
                             --cpus=1.5 \
                             -e APP_URL="http://dafl-frontend:80" \
                             markhobson/maven-chrome:jdk-17 \
-                            mvn clean test -DsuiteXmlFile=testng.xml || true
+                            mvn clean test -DsuiteXmlFile=testng-web.xml || true
                     """
                 }
             }
             post {
                 always {
                     // 1. Luôn thu thập báo cáo Surefire để Jenkins hiển thị biểu đồ Test Result (Pass/Fail)
-                    junit testResults: "${env.WORKTREE_DIR}/tests/functional-selenium/target/surefire-reports/*.xml", allowEmptyResults: true
+                    junit testResults: "${env.WORKTREE_DIR}/dafl-tests/automation/target/surefire-reports/*.xml", allowEmptyResults: true
 
                     // 2. Lưu trữ file XML kết quả làm Artifact
-                    archiveArtifacts artifacts: "${env.WORKTREE_DIR}/tests/functional-selenium/target/surefire-reports/*.xml", allowEmptyArchive: true
+                    archiveArtifacts artifacts: "${env.WORKTREE_DIR}/dafl-tests/automation/target/surefire-reports/*.xml", allowEmptyArchive: true
 
                     // 3. Render Allure Test Report nếu Jenkins đã cài đặt Allure Plugin
                     script {
-                        def allureDir = "${env.WORKTREE_DIR}/tests/functional-selenium/target/allure-results"
+                        def allureDir = "${env.WORKTREE_DIR}/dafl-tests/automation/target/allure-results"
+                        if (fileExists(allureDir)) {
+                            try {
+                                allure([
+                                    includeProperties: false,
+                                    jdk: '',
+                                    properties: [],
+                                    reportBuildPolicy: 'ALWAYS',
+                                    results: [[path: allureDir]]
+                                ])
+                            } catch (Throwable err) {
+                                echo "Allure Report warning: Chưa cấu hình Allure Commandline trong Jenkins Tools. Chi tiết: ${err}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Functional Regression - Admin') {
+            steps {
+                echo "=== Functional Regression - Admin: Chạy Maven Selenium Headless, suite admin (RAM Limit: 1.2GB) ==="
+                dir("${env.WORKTREE_DIR}/dafl-tests/automation") {
+                    sh """
+                        # KHÔNG dọn target/ và KHÔNG `mvn clean` ở stage này: giữ lại kết
+                        # quả suite web vừa chạy để Quality Gate phía sau kiểm tra cả 2.
+
+                        # Chạy container Maven + Chrome Headless chia sẻ volume với dafl-jenkins
+                        docker run --rm \
+                            --name dafl-selenium-runner \
+                            --network ${DOCKER_NETWORK} \
+                            --volumes-from dafl-jenkins \
+                            -w \$(pwd) \
+                            --memory=1.2g \
+                            --cpus=1.5 \
+                            -e APP_URL="http://dafl-frontend:80" \
+                            -e ADMIN_APP_URL="http://dafl-admin:80" \
+                            markhobson/maven-chrome:jdk-17 \
+                            mvn test -DsuiteXmlFile=testng-admin.xml || true
+                    """
+                }
+            }
+            post {
+                always {
+                    // 1. Luôn thu thập báo cáo Surefire để Jenkins hiển thị biểu đồ Test Result (Pass/Fail)
+                    junit testResults: "${env.WORKTREE_DIR}/dafl-tests/automation/target/surefire-reports/*.xml", allowEmptyResults: true
+
+                    // 2. Lưu trữ file XML kết quả làm Artifact
+                    archiveArtifacts artifacts: "${env.WORKTREE_DIR}/dafl-tests/automation/target/surefire-reports/*.xml", allowEmptyArchive: true
+
+                    // 3. Render Allure Test Report nếu Jenkins đã cài đặt Allure Plugin
+                    script {
+                        def allureDir = "${env.WORKTREE_DIR}/dafl-tests/automation/target/allure-results"
                         if (fileExists(allureDir)) {
                             try {
                                 allure([
@@ -141,7 +207,7 @@ pipeline {
         stage('Stage 3: Functional Quality Gate') {
             steps {
                 echo "=== Stage 3: Kiểm tra kết quả Functional Tests (Abort nếu Fail) ==="
-                dir("${env.WORKTREE_DIR}/tests/functional-selenium") {
+                dir("${env.WORKTREE_DIR}/dafl-tests/automation") {
                     script {
                         def reportDir = "target/surefire-reports"
                         if (!fileExists(reportDir)) {

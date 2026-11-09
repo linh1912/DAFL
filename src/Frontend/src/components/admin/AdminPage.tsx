@@ -153,8 +153,10 @@ const returnPillClass = (s: string) =>
 /** Modal chi tiết dùng chung cho mọi mục (Spark): overlay + card trắng,
  *  header có tiêu đề + nút đóng X, footer có nút Đóng + nút thao tác chính.
  *  Đóng bằng nút X, nút Đóng hoặc bấm ra ngoài overlay. */
-function SparkModal({ title, onClose, children, footer, testid }: {
+function SparkModal({ title, onClose, children, footer, testid, hideFooter }: {
   title: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode; testid?: string;
+  /** Ẩn footer mặc định (nút Đóng) — form trong modal tự có nút Lưu/Đóng của nó. */
+  hideFooter?: boolean;
 }) {
   return (
     <div className="sa-modal-overlay" onClick={onClose}>
@@ -164,10 +166,12 @@ function SparkModal({ title, onClose, children, footer, testid }: {
           <button type="button" className="sa-modal-close" onClick={onClose} aria-label="Đóng">✕</button>
         </div>
         <div className="sa-modal-body">{children}</div>
-        <div className="sa-modal-foot">
-          <button type="button" className="sa-btn sa-btn-ghost" onClick={onClose}>Đóng</button>
-          {footer}
-        </div>
+        {!hideFooter && (
+          <div className="sa-modal-foot">
+            <button type="button" className="sa-btn sa-btn-ghost" onClick={onClose}>Đóng</button>
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -177,6 +181,33 @@ function SparkModal({ title, onClose, children, footer, testid }: {
 const KvRow = ({ label, value }: { label: string; value: React.ReactNode }) => (
   <div className="sa-kv"><span>{label}</span><div>{value}</div></div>
 );
+
+/** Số dòng mỗi trang cho mọi bảng admin (phân trang client-side trên dữ liệu đã tải). */
+const PAGE_SIZE = 10;
+
+/** Phân trang dùng chung cho các bảng admin: Trước/Sau + số trang + "Trang X / Y" + tổng dòng.
+ *  testid khối: `admin-<muc>-pagination`; nút Trước/Sau: `<testid>-prev` / `<testid>-next`. */
+function SaPagination({ page, totalPages, total, testid, onPage }: {
+  page: number; totalPages: number; total: number; testid: string; onPage: (p: number) => void;
+}) {
+  if (total === 0) return null;
+  const pages: number[] = [];
+  const start = Math.max(1, Math.min(page - 2, totalPages - 4));
+  const end = Math.min(totalPages, start + 4);
+  for (let p = start; p <= end; p++) pages.push(p);
+  return (
+    <div className="sa-pagination" data-testid={testid}>
+      <span className="sa-pagination-info">Trang {page} / {totalPages} — Tổng {total} dòng</span>
+      <div className="sa-pagination-btns">
+        <button type="button" className="sa-page-btn" disabled={page <= 1} onClick={() => onPage(page - 1)} data-testid={`${testid}-prev`} aria-label="Trang trước">‹ Trước</button>
+        {pages.map(p => (
+          <button key={p} type="button" className={`sa-page-btn${p === page ? ' sa-page-active' : ''}`} aria-current={p === page ? 'page' : undefined} onClick={() => onPage(p)} data-testid={`${testid}-page-${p}`}>{p}</button>
+        ))}
+        <button type="button" className="sa-page-btn" disabled={page >= totalPages} onClick={() => onPage(page + 1)} data-testid={`${testid}-next`} aria-label="Trang sau">Sau ›</button>
+      </div>
+    </div>
+  );
+}
 
 /** Xuất CSV client-side từ dữ liệu đang hiển thị (có BOM để Excel mở đúng UTF-8). */
 const downloadCsv = (filename: string, header: string[], rows: Array<Array<string | number>>) => {
@@ -337,6 +368,15 @@ export default function AdminPage() {
   const [auditError, setAuditError] = useState<string | null>(null);
   const [auditSearch, setAuditSearch] = useState('');
 
+  // Phân trang client-side: 10 dòng/trang cho mỗi bảng (xem SaPagination).
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [productsPage, setProductsPage] = useState(1);
+  const [categoriesPage, setCategoriesPage] = useState(1);
+  const [promosPage, setPromosPage] = useState(1);
+  const [customersPage, setCustomersPage] = useState(1);
+  const [returnsPage, setReturnsPage] = useState(1);
+  const [auditPage, setAuditPage] = useState(1);
+
   // ---------- Bảo vệ: xác định quyền admin ----------
   useEffect(() => {
     let cancelled = false;
@@ -417,12 +457,14 @@ export default function AdminPage() {
     finally { setProductsLoading(false); }
   }, []);
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (overrides?: { status?: string; search?: string }) => {
     setOrdersLoading(true); setOrdersError(null);
     try {
+      const status = overrides?.status ?? orderStatusFilter;
+      const search = overrides?.search ?? orderSearch;
       const params = new URLSearchParams({ page: '1', pageSize: '20' });
-      if (orderStatusFilter) params.set('status', orderStatusFilter);
-      if (orderSearch.trim()) params.set('search', orderSearch.trim());
+      if (status) params.set('status', status);
+      if (search.trim()) params.set('search', search.trim());
       const { body } = await apiJson<AdminOrderRow[]>(`/api/admin/orders?${params.toString()}`, { skipAuthHandler: true });
       if (body?.success && Array.isArray(body.data)) setOrders(body.data);
       else setOrdersError(apiErr(body, 'Không tải được đơn hàng.'));
@@ -430,11 +472,12 @@ export default function AdminPage() {
     finally { setOrdersLoading(false); }
   }, [orderStatusFilter, orderSearch]);
 
-  const loadPromos = useCallback(async () => {
+  const loadPromos = useCallback(async (overrides?: { status?: string }) => {
     setPromosLoading(true); setPromosError(null);
     try {
+      const status = overrides?.status ?? promoStatusFilter;
       const params = new URLSearchParams({ page: '1', pageSize: '20' });
-      if (promoStatusFilter) params.set('status', promoStatusFilter);
+      if (status) params.set('status', status);
       const { body } = await apiJson<Promotion[]>(`/api/admin/promotions?${params.toString()}`, { skipAuthHandler: true });
       if (body?.success && Array.isArray(body.data)) setPromos(body.data);
       else setPromosError(apiErr(body, 'Không tải được khuyến mãi.'));
@@ -442,12 +485,14 @@ export default function AdminPage() {
     finally { setPromosLoading(false); }
   }, [promoStatusFilter]);
 
-  const loadCustomers = useCallback(async () => {
+  const loadCustomers = useCallback(async (overrides?: { tier?: string; search?: string }) => {
     setCustomersLoading(true); setCustomersError(null);
     try {
+      const tier = overrides?.tier ?? customerTierFilter;
+      const search = overrides?.search ?? customerSearch;
       const params = new URLSearchParams({ page: '1', pageSize: '20' });
-      if (customerTierFilter) params.set('tier', customerTierFilter);
-      if (customerSearch.trim()) params.set('search', customerSearch.trim());
+      if (tier) params.set('tier', tier);
+      if (search.trim()) params.set('search', search.trim());
       const { body } = await apiJson<Customer[]>(`/api/admin/customers?${params.toString()}`, { skipAuthHandler: true });
       if (body?.success && Array.isArray(body.data)) setCustomers(body.data);
       else setCustomersError(apiErr(body, 'Không tải được khách hàng.'));
@@ -500,6 +545,29 @@ export default function AdminPage() {
     if (tab === 'membership' && !loadedRef.current.has('membership')) { loadedRef.current.add('membership'); void loadTiers(); }
     if (tab === 'returns' && !loadedRef.current.has('returns')) { loadedRef.current.add('returns'); void loadReturns(); void loadAudit(); }
   }, [tab, gate, loadDashboard, loadRevenue, loadOrders, loadProducts, loadCategories, loadPromos, loadCustomers, loadTiers, loadReturns, loadAudit]);
+
+  // Đổi bộ lọc/tìm kiếm thì quay về trang 1 (phân trang client-side).
+  useEffect(() => { setOrdersPage(1); }, [orderSearch, orderStatusFilter]);
+  useEffect(() => { setProductsPage(1); }, [productSearch, productCatFilter]);
+  useEffect(() => { setCategoriesPage(1); }, [catSearch, catStatusFilter]);
+  useEffect(() => { setPromosPage(1); }, [promoSearch, promoStatusFilter]);
+  useEffect(() => { setCustomersPage(1); }, [customerSearch, customerTierFilter]);
+  useEffect(() => { setReturnsPage(1); }, [returnSearch, returnStatusFilter]);
+  useEffect(() => { setAuditPage(1); }, [auditSearch]);
+
+  // ---------- Nút "Đặt lại" ở toolbar từng mục: xóa sạch bộ lọc/tìm kiếm về mặc định.
+  // Mục lọc ở server (đơn hàng/khách hàng/khuyến mãi): tải lại luôn với bộ lọc đã xóa
+  // (loader nhận overrides để không dính state cũ trong closure). Mục lọc client-side
+  // thì chỉ cần xóa state — bảng tự lọc lại trên dữ liệu đã tải.
+  const resetOrders = () => { setOrderSearch(''); setOrderStatusFilter(''); setOrdersPage(1); void loadOrders({ status: '', search: '' }); };
+  const resetProducts = () => { setProductSearch(''); setProductCatFilter(''); setProductsPage(1); };
+  const resetCategories = () => { setCatSearch(''); setCatStatusFilter(''); setCategoriesPage(1); };
+  const resetPromos = () => { setPromoSearch(''); setPromoStatusFilter(''); setPromosPage(1); void loadPromos({ status: '' }); };
+  const resetCustomers = () => { setCustomerSearch(''); setCustomerTierFilter(''); setCustomersPage(1); void loadCustomers({ tier: '', search: '' }); };
+  const resetReturns = () => { setReturnSearch(''); setReturnStatusFilter(''); setReturnsPage(1); };
+  const resetAudit = () => { setAuditSearch(''); setAuditPage(1); };
+  // Hội viên không có bộ lọc/tìm kiếm: Đặt lại = hủy thay đổi cấu hình hạng chưa lưu.
+  const resetMembers = () => { setTierDraft(tiers); };
 
   // ---------- Gate ----------
   if (gate === 'checking') return <div className="spark-admin sa-gate-page" data-testid="admin-page"><div className="sa-checking">Đang kiểm tra quyền...</div></div>;
@@ -590,6 +658,20 @@ export default function AdminPage() {
     a.action.toLowerCase().includes(auditSearch.trim().toLowerCase()) ||
     (a.entityType ?? '').toLowerCase().includes(auditSearch.trim().toLowerCase())
   );
+
+  // ---------- Phân trang client-side (10 dòng/trang) trên dữ liệu đã tải ----------
+  const paginate = <T,>(rows: T[], page: number) => {
+    const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+    const safePage = Math.min(page, totalPages);
+    return { totalPages, safePage, paged: rows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE) };
+  };
+  const ordersPaging = paginate(orders, ordersPage);
+  const productsPaging = paginate(filteredProducts, productsPage);
+  const categoriesPaging = paginate(filteredCategories, categoriesPage);
+  const promosPaging = paginate(filteredPromos, promosPage);
+  const customersPaging = paginate(customers, customersPage);
+  const returnsPaging = paginate(filteredReturns, returnsPage);
+  const auditPaging = paginate(filteredAudit, auditPage);
 
   const openOrderDetail = async (id: string) => {
     setOrderDetailLoading(true); setOrderDetailError(null); setSelectedOrder(null);
@@ -861,33 +943,9 @@ export default function AdminPage() {
   };
   const canExport = ['orders', 'products', 'categories', 'promotions', 'customers', 'returns'].includes(tab);
 
-  // Nút "+ Tạo mới" ở topbar: chỉ 3 mục có form tạo (mở đúng form như nút trong mục).
-  const openCreateForm = () => {
-    if (tab === 'products') {
-      setProductForm({ id: '', name: '', categoryId: categories[0]?.id ?? '', price: '', originalPrice: '', stock: '', description: '', imageUrl: '', isActive: true });
-      setProductFormError(null); setProductFormOpen(true);
-    } else if (tab === 'categories') {
-      setCatForm({ id: '', name: '', description: '', sortOrder: '0', isActive: true });
-      setCatFormError(null); setCatFormOpen(true);
-    } else if (tab === 'promotions') {
-      setPromoForm({ code: '', description: '', discountType: 'Percentage', discountValue: '', minOrderAmount: '0', maxDiscountAmount: '', startDate: '', expiryDate: '', maxUses: '', maxUsesPerUser: '1', minTier: '', scopeType: 'All', scopeCategoryId: '', scopeProductIds: '' });
-      setPromoFormError(null); setPromoFormOpen(true);
-    }
-  };
-  const canCreate = tab === 'products' || tab === 'categories' || tab === 'promotions';
-  const createLabel = tab === 'products' ? 'Thêm sản phẩm' : tab === 'categories' ? 'Thêm danh mục' : 'Tạo khuyến mãi';
-
-  // Ô search ở topbar nối vào ô tìm kiếm của mục đang mở (đơn hàng/sản phẩm/
-  // khách hàng — cùng state nên đồng bộ với ô trong toolbar). Mục khác không
-  // có search thì ô topbar bị vô hiệu (trang trí).
-  const topSearchSupported = tab === 'orders' || tab === 'products' || tab === 'customers';
-  const topSearchValue = tab === 'orders' ? orderSearch : tab === 'products' ? productSearch : tab === 'customers' ? customerSearch : '';
-  const onTopSearchChange = (v: string) => {
-    if (tab === 'orders') setOrderSearch(v);
-    else if (tab === 'products') setProductSearch(v);
-    else if (tab === 'customers') setCustomerSearch(v);
-  };
-
+  // Nút "+ Thêm mới" giờ nằm ở toolbar trái của từng mục có tạo mới
+  // (Sản phẩm / Danh mục / Khuyến mãi) — giữ nguyên testid cũ của 3 nút đó.
+  // Topbar không còn nút Tạo mới hay ô tìm kiếm nữa.
   const toggleFullscreen = () => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen?.();
@@ -959,21 +1017,6 @@ export default function AdminPage() {
           >
             ☰
           </button>
-          {canCreate && (
-            <button type="button" className="sa-btn sa-btn-create" onClick={openCreateForm}>
-              + Tạo mới
-            </button>
-          )}
-          <label className="sa-topbar-search">
-            <span aria-hidden="true">🔍</span>
-            <input
-              value={topSearchValue}
-              onChange={e => onTopSearchChange(e.target.value)}
-              placeholder={topSearchSupported ? `Tìm kiếm ${meta.title.toLowerCase()}...` : 'Tìm kiếm'}
-              disabled={!topSearchSupported}
-              aria-label="Tìm kiếm"
-            />
-          </label>
           <div className="sa-topbar-spacer" />
           <button type="button" className="sa-topbar-btn" onClick={toggleFullscreen} aria-label="Toàn màn hình" title="Toàn màn hình">
             ⛶
@@ -1052,9 +1095,6 @@ export default function AdminPage() {
               <h1>{meta.title}</h1>
               <p>{meta.desc}</p>
             </div>
-            <nav className="sa-breadcrumb" aria-label="Breadcrumb">
-              Trang chủ / Quản trị / <strong>{meta.title}</strong>
-            </nav>
           </div>
 
           {notice && (
@@ -1222,14 +1262,17 @@ export default function AdminPage() {
             {tab === 'orders' && (
               <section>
                 <div className="sa-toolbar">
-                  <input className="sa-input" placeholder="Tìm mã đơn / tên khách / email" value={orderSearch} onChange={e => setOrderSearch(e.target.value)} data-testid="admin-order-search" />
-                  <select className="sa-input" value={orderStatusFilter} onChange={e => setOrderStatusFilter(e.target.value)} data-testid="admin-order-status-filter" aria-label="Lọc trạng thái">
-                    <option value="">Tất cả trạng thái</option>
-                    {ORDER_STATUSES.map(s => <option key={s} value={s}>{ORDER_STATUS_LABELS[s]}</option>)}
-                  </select>
-                  <button type="button" onClick={() => void loadOrders()} className="sa-btn">Tìm</button>
-                  <span className="sa-spacer" />
-                  <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  <div className="sa-toolbar-right">
+                    <input className="sa-input" placeholder="Tìm mã đơn / tên khách / email" value={orderSearch} onChange={e => setOrderSearch(e.target.value)} data-testid="admin-order-search" />
+                    <select className="sa-input" value={orderStatusFilter} onChange={e => setOrderStatusFilter(e.target.value)} data-testid="admin-order-status-filter" aria-label="Lọc trạng thái">
+                      <option value="">Tất cả trạng thái</option>
+                      {ORDER_STATUSES.map(s => <option key={s} value={s}>{ORDER_STATUS_LABELS[s]}</option>)}
+                    </select>
+                    <button type="button" onClick={() => void loadOrders()} className="sa-btn">Tìm</button>
+                    <button type="button" className="sa-icon-btn" title="Đặt lại bộ lọc" aria-label="Đặt lại bộ lọc" onClick={resetOrders} data-testid="admin-orders-reset-btn">↺</button>
+                    <button type="button" className="sa-icon-btn" title="Làm mới" aria-label="Làm mới" onClick={() => void loadOrders()} data-testid="admin-orders-refresh-btn">⟳</button>
+                    <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  </div>
                 </div>
                 {ordersLoading && <p>Đang tải đơn hàng...</p>}
                 {ordersError && <p className="sa-error">{ordersError}</p>}
@@ -1239,7 +1282,7 @@ export default function AdminPage() {
                     <table>
                       <thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>Trạng thái</th><th>Thanh toán</th><th>Tổng tiền</th><th>Ngày đặt</th><th>Thao tác</th></tr></thead>
                       <tbody>
-                        {orders.map(o => (
+                        {ordersPaging.paged.map(o => (
                           <tr key={o.id} onClick={() => void openOrderDetail(o.id)} className="sa-clickable" data-testid={`admin-order-row-${o.id}`}>
                             <td><span className="sa-code">{o.orderDisplayCode ?? `#${o.orderCode}`}</span></td>
                             <td>
@@ -1268,6 +1311,9 @@ export default function AdminPage() {
                       </tbody>
                     </table>
                   </div>
+                )}
+                {orders.length > 0 && (
+                  <SaPagination page={ordersPaging.safePage} totalPages={ordersPaging.totalPages} total={orders.length} testid="admin-orders-pagination" onPage={setOrdersPage} />
                 )}
                 {orderDetailLoading && <p>Đang tải chi tiết đơn...</p>}
                 {orderDetailError && <p className="sa-error">{orderDetailError}</p>}
@@ -1336,22 +1382,32 @@ export default function AdminPage() {
               <section>
                 <p className="sa-muted-text">Danh sách lấy từ GET /api/products công khai (chỉ sản phẩm đang bán). Sản phẩm đã ẩn/xóa mềm không hiện ở đây vì backend chưa có endpoint list SP riêng cho admin.</p>
                 <div className="sa-toolbar">
-                  <input className="sa-input" placeholder="Tìm tên sản phẩm" value={productSearch} onChange={e => setProductSearch(e.target.value)} data-testid="admin-product-search" />
-                  <select className="sa-input" value={productCatFilter} onChange={e => setProductCatFilter(e.target.value)} aria-label="Lọc danh mục">
-                    <option value="">Tất cả danh mục</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                  <button type="button" onClick={() => { setProductForm({ id: '', name: '', categoryId: categories[0]?.id ?? '', price: '', originalPrice: '', stock: '', description: '', imageUrl: '', isActive: true }); setProductFormError(null); setProductFormOpen(true); }} className="sa-btn" data-testid="admin-product-add-btn">+ Thêm sản phẩm</button>
-                  <button type="button" onClick={() => void loadProducts()} className="sa-btn sa-btn-ghost">Tải lại</button>
-                  <span className="sa-spacer" />
-                  <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  <div className="sa-toolbar-left">
+                    <button type="button" onClick={() => { setProductForm({ id: '', name: '', categoryId: categories[0]?.id ?? '', price: '', originalPrice: '', stock: '', description: '', imageUrl: '', isActive: true }); setProductFormError(null); setProductFormOpen(true); }} className="sa-btn sa-btn-add" data-testid="admin-product-add-btn">+ Thêm sản phẩm</button>
+                  </div>
+                  <div className="sa-toolbar-right">
+                    <input className="sa-input" placeholder="Tìm tên sản phẩm" value={productSearch} onChange={e => setProductSearch(e.target.value)} data-testid="admin-product-search" />
+                    <select className="sa-input" value={productCatFilter} onChange={e => setProductCatFilter(e.target.value)} aria-label="Lọc danh mục">
+                      <option value="">Tất cả danh mục</option>
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <button type="button" onClick={() => setProductsPage(1)} className="sa-btn">Tìm</button>
+                    <button type="button" className="sa-icon-btn" title="Đặt lại bộ lọc" aria-label="Đặt lại bộ lọc" onClick={resetProducts} data-testid="admin-products-reset-btn">↺</button>
+                    <button type="button" className="sa-icon-btn" title="Làm mới" aria-label="Làm mới" onClick={() => void loadProducts()} data-testid="admin-products-refresh-btn">⟳</button>
+                    <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  </div>
                 </div>
                 {productsLoading && <p>Đang tải sản phẩm...</p>}
                 {productsError && <p className="sa-error">{productsError}</p>}
                 {productFormOpen && (
-                  <form onSubmit={saveProduct} className="sa-card" data-testid="admin-product-form">
-                    <h3>{productForm.id ? 'Sửa sản phẩm' : 'Thêm sản phẩm'}</h3>
-                    {productFormError && <p className="sa-error">{productFormError}</p>}
+                  <SparkModal
+                    title={productForm.id ? 'Sửa sản phẩm' : 'Thêm sản phẩm'}
+                    onClose={() => setProductFormOpen(false)}
+                    hideFooter
+                    testid="admin-product-form-modal"
+                  >
+                    <form onSubmit={saveProduct} data-testid="admin-product-form">
+                      {productFormError && <p className="sa-error">{productFormError}</p>}
                     <div className="sa-form-grid">
                       <label className="sa-field"><span>Tên sản phẩm (3–120 ký tự)</span>
                         <input className="sa-input" value={productForm.name} onChange={e => setProductForm({ ...productForm, name: e.target.value })} data-testid="admin-product-name-input" />
@@ -1374,18 +1430,19 @@ export default function AdminPage() {
                       <label className="sa-field"><span>Ảnh URL</span>
                         <input className="sa-input" value={productForm.imageUrl} onChange={e => setProductForm({ ...productForm, imageUrl: e.target.value })} />
                       </label>
-                      <label className="sa-field"><span>Mô tả</span>
+                      <label className="sa-field sa-field-wide"><span>Mô tả</span>
                         <textarea className="sa-input" value={productForm.description} onChange={e => setProductForm({ ...productForm, description: e.target.value })} />
                       </label>
                       {productForm.id && (
-                        <label className="sa-check"><input type="checkbox" checked={productForm.isActive} onChange={e => setProductForm({ ...productForm, isActive: e.target.checked })} /> Đang hiển thị</label>
+                        <label className="sa-check sa-field-wide"><input type="checkbox" checked={productForm.isActive} onChange={e => setProductForm({ ...productForm, isActive: e.target.checked })} /> Đang hiển thị</label>
                       )}
                     </div>
                     <div className="sa-form-actions">
                       <button type="submit" className="sa-btn" data-testid="admin-product-save-btn">Lưu</button>
                       <button type="button" onClick={() => setProductFormOpen(false)} className="sa-btn sa-btn-ghost">Đóng</button>
                     </div>
-                  </form>
+                    </form>
+                  </SparkModal>
                 )}
                 {!productsLoading && filteredProducts.length === 0 && !productsError && <p>Không có sản phẩm nào.</p>}
                 {filteredProducts.length > 0 && (
@@ -1393,7 +1450,7 @@ export default function AdminPage() {
                     <table>
                       <thead><tr><th>Sản phẩm</th><th>Danh mục</th><th>Giá</th><th>Tồn kho</th><th>Đánh giá</th><th>Thao tác</th></tr></thead>
                       <tbody>
-                        {filteredProducts.map(p => (
+                        {productsPaging.paged.map(p => (
                           <tr key={p.id}>
                             <td>
                               <span className="sa-user-cell">
@@ -1437,46 +1494,60 @@ export default function AdminPage() {
                     </table>
                   </div>
                 )}
+                {filteredProducts.length > 0 && (
+                  <SaPagination page={productsPaging.safePage} totalPages={productsPaging.totalPages} total={filteredProducts.length} testid="admin-products-pagination" onPage={setProductsPage} />
+                )}
               </section>
             )}
 
             {tab === 'categories' && (
               <section>
                 <div className="sa-toolbar">
-                  <input className="sa-input" placeholder="Tìm tên / slug danh mục" value={catSearch} onChange={e => setCatSearch(e.target.value)} aria-label="Tìm danh mục" />
-                  <select className="sa-input" value={catStatusFilter} onChange={e => setCatStatusFilter(e.target.value)} aria-label="Lọc trạng thái danh mục">
-                    <option value="">Tất cả trạng thái</option>
-                    <option value="true">Đang hiển thị</option>
-                    <option value="false">Đã ẩn</option>
-                  </select>
-                  <button type="button" onClick={() => { setCatForm({ id: '', name: '', description: '', sortOrder: '0', isActive: true }); setCatFormError(null); setCatFormOpen(true); }} className="sa-btn" data-testid="admin-category-add-btn">+ Thêm danh mục</button>
-                  <button type="button" onClick={() => void loadCategories()} className="sa-btn sa-btn-ghost">Tải lại</button>
-                  <span className="sa-spacer" />
-                  <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  <div className="sa-toolbar-left">
+                    <button type="button" onClick={() => { setCatForm({ id: '', name: '', description: '', sortOrder: '0', isActive: true }); setCatFormError(null); setCatFormOpen(true); }} className="sa-btn sa-btn-add" data-testid="admin-category-add-btn">+ Thêm danh mục</button>
+                  </div>
+                  <div className="sa-toolbar-right">
+                    <input className="sa-input" placeholder="Tìm tên / slug danh mục" value={catSearch} onChange={e => setCatSearch(e.target.value)} aria-label="Tìm danh mục" />
+                    <select className="sa-input" value={catStatusFilter} onChange={e => setCatStatusFilter(e.target.value)} aria-label="Lọc trạng thái danh mục">
+                      <option value="">Tất cả trạng thái</option>
+                      <option value="true">Đang hiển thị</option>
+                      <option value="false">Đã ẩn</option>
+                    </select>
+                    <button type="button" onClick={() => setCategoriesPage(1)} className="sa-btn">Tìm</button>
+                    <button type="button" className="sa-icon-btn" title="Đặt lại bộ lọc" aria-label="Đặt lại bộ lọc" onClick={resetCategories} data-testid="admin-categories-reset-btn">↺</button>
+                    <button type="button" className="sa-icon-btn" title="Làm mới" aria-label="Làm mới" onClick={() => void loadCategories()} data-testid="admin-categories-refresh-btn">⟳</button>
+                    <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  </div>
                 </div>
                 {catsLoading && <p>Đang tải danh mục...</p>}
                 {catsError && <p className="sa-error">{catsError}</p>}
                 {catFormOpen && (
-                  <form onSubmit={saveCategory} className="sa-card" data-testid="admin-category-form">
-                    <h3>{catForm.id ? 'Sửa danh mục' : 'Thêm danh mục'}</h3>
-                    {catFormError && <p className="sa-error">{catFormError}</p>}
+                  <SparkModal
+                    title={catForm.id ? 'Sửa danh mục' : 'Thêm danh mục'}
+                    onClose={() => setCatFormOpen(false)}
+                    hideFooter
+                    testid="admin-category-form-modal"
+                  >
+                    <form onSubmit={saveCategory} data-testid="admin-category-form">
+                      {catFormError && <p className="sa-error">{catFormError}</p>}
                     <div className="sa-form-grid">
                       <label className="sa-field"><span>Tên danh mục (2–150 ký tự)</span>
                         <input className="sa-input" value={catForm.name} onChange={e => setCatForm({ ...catForm, name: e.target.value })} data-testid="admin-category-name-input" />
                       </label>
-                      <label className="sa-field"><span>Mô tả</span>
+                      <label className="sa-field sa-field-wide"><span>Mô tả</span>
                         <input className="sa-input" value={catForm.description} onChange={e => setCatForm({ ...catForm, description: e.target.value })} />
                       </label>
                       <label className="sa-field"><span>Thứ tự sắp xếp</span>
                         <input className="sa-input" type="number" value={catForm.sortOrder} onChange={e => setCatForm({ ...catForm, sortOrder: e.target.value })} />
                       </label>
-                      {catForm.id && <label className="sa-check"><input type="checkbox" checked={catForm.isActive} onChange={e => setCatForm({ ...catForm, isActive: e.target.checked })} /> Đang hiển thị</label>}
+                      {catForm.id && <label className="sa-check sa-field-wide"><input type="checkbox" checked={catForm.isActive} onChange={e => setCatForm({ ...catForm, isActive: e.target.checked })} /> Đang hiển thị</label>}
                     </div>
                     <div className="sa-form-actions">
                       <button type="submit" className="sa-btn">Lưu</button>
                       <button type="button" onClick={() => setCatFormOpen(false)} className="sa-btn sa-btn-ghost">Đóng</button>
                     </div>
-                  </form>
+                    </form>
+                  </SparkModal>
                 )}
                 {!catsLoading && filteredCategories.length === 0 && !catsError && <p>Chưa có danh mục.</p>}
                 {filteredCategories.length > 0 && (
@@ -1484,7 +1555,7 @@ export default function AdminPage() {
                     <table>
                       <thead><tr><th>Tên</th><th>Slug</th><th>Mô tả</th><th>Số SP</th><th>Thứ tự</th><th>Hiển thị</th><th>Thao tác</th></tr></thead>
                       <tbody>
-                        {filteredCategories.map(c => (
+                        {categoriesPaging.paged.map(c => (
                           <tr key={c.id}>
                             <td><strong>{c.name}</strong></td>
                             <td>{c.slug ?? '—'}</td>
@@ -1503,31 +1574,45 @@ export default function AdminPage() {
                     </table>
                   </div>
                 )}
+                {filteredCategories.length > 0 && (
+                  <SaPagination page={categoriesPaging.safePage} totalPages={categoriesPaging.totalPages} total={filteredCategories.length} testid="admin-categories-pagination" onPage={setCategoriesPage} />
+                )}
               </section>
             )}
 
             {tab === 'promotions' && (
               <section>
                 <div className="sa-toolbar">
-                  <input className="sa-input" placeholder="Tìm mã / mô tả khuyến mãi" value={promoSearch} onChange={e => setPromoSearch(e.target.value)} aria-label="Tìm khuyến mãi" />
-                  <select className="sa-input" value={promoStatusFilter} onChange={e => setPromoStatusFilter(e.target.value)} aria-label="Lọc trạng thái voucher">
-                    <option value="">Tất cả trạng thái</option>
-                    <option value="Draft">Nháp</option>
-                    <option value="Active">Đang chạy</option>
-                    <option value="Disabled">Đã tắt</option>
-                    <option value="Expired">Hết hạn</option>
-                  </select>
-                  <button type="button" onClick={() => void loadPromos()} className="sa-btn">Lọc</button>
-                  <button type="button" onClick={() => { setPromoForm({ code: '', description: '', discountType: 'Percentage', discountValue: '', minOrderAmount: '0', maxDiscountAmount: '', startDate: '', expiryDate: '', maxUses: '', maxUsesPerUser: '1', minTier: '', scopeType: 'All', scopeCategoryId: '', scopeProductIds: '' }); setPromoFormError(null); setPromoFormOpen(true); }} className="sa-btn" data-testid="admin-promo-add-btn">+ Tạo khuyến mãi</button>
-                  <span className="sa-spacer" />
-                  <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  <div className="sa-toolbar-left">
+                    <button type="button" onClick={() => { setPromoForm({ code: '', description: '', discountType: 'Percentage', discountValue: '', minOrderAmount: '0', maxDiscountAmount: '', startDate: '', expiryDate: '', maxUses: '', maxUsesPerUser: '1', minTier: '', scopeType: 'All', scopeCategoryId: '', scopeProductIds: '' }); setPromoFormError(null); setPromoFormOpen(true); }} className="sa-btn sa-btn-add" data-testid="admin-promo-add-btn">+ Tạo khuyến mãi</button>
+                  </div>
+                  <div className="sa-toolbar-right">
+                    <input className="sa-input" placeholder="Tìm mã / mô tả khuyến mãi" value={promoSearch} onChange={e => setPromoSearch(e.target.value)} aria-label="Tìm khuyến mãi" />
+                    <select className="sa-input" value={promoStatusFilter} onChange={e => setPromoStatusFilter(e.target.value)} aria-label="Lọc trạng thái voucher">
+                      <option value="">Tất cả trạng thái</option>
+                      <option value="Draft">Nháp</option>
+                      <option value="Active">Đang chạy</option>
+                      <option value="Disabled">Đã tắt</option>
+                      <option value="Expired">Hết hạn</option>
+                    </select>
+                    <button type="button" onClick={() => void loadPromos()} className="sa-btn">Lọc</button>
+                    <button type="button" className="sa-icon-btn" title="Đặt lại bộ lọc" aria-label="Đặt lại bộ lọc" onClick={resetPromos} data-testid="admin-promos-reset-btn">↺</button>
+                    <button type="button" className="sa-icon-btn" title="Làm mới" aria-label="Làm mới" onClick={() => void loadPromos()} data-testid="admin-promos-refresh-btn">⟳</button>
+                    <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  </div>
                 </div>
                 {promosLoading && <p>Đang tải khuyến mãi...</p>}
                 {promosError && <p className="sa-error">{promosError}</p>}
                 {promoFormOpen && (
-                  <form onSubmit={savePromo} className="sa-card" data-testid="admin-promo-form">
-                    <h3>Tạo khuyến mãi mới (tạo ở trạng thái Nháp — bấm Kích hoạt để chạy)</h3>
-                    {promoFormError && <p className="sa-error">{promoFormError}</p>}
+                  <SparkModal
+                    title="Tạo khuyến mãi mới"
+                    onClose={() => setPromoFormOpen(false)}
+                    hideFooter
+                    testid="admin-promo-form-modal"
+                  >
+                    <form onSubmit={savePromo} data-testid="admin-promo-form">
+                      <p className="sa-muted-text">Tạo ở trạng thái Nháp — bấm Kích hoạt để chạy.</p>
+                      {promoFormError && <p className="sa-error">{promoFormError}</p>}
                     <div className="sa-form-grid">
                       <label className="sa-field"><span>Mã (3–50 ký tự: chữ, số, -, _)</span>
                         <input className="sa-input" value={promoForm.code} onChange={e => setPromoForm({ ...promoForm, code: e.target.value })} data-testid="admin-promo-code-input" />
@@ -1580,7 +1665,7 @@ export default function AdminPage() {
                         </select>
                       </label>
                       {promoForm.scopeType === 'Category' && (
-                        <label className="sa-field"><span>Danh mục áp dụng</span>
+                        <label className="sa-field sa-field-wide"><span>Danh mục áp dụng</span>
                           <select className="sa-input" value={promoForm.scopeCategoryId} onChange={e => setPromoForm({ ...promoForm, scopeCategoryId: e.target.value })} aria-label="Danh mục áp dụng">
                             <option value="">— Chọn danh mục —</option>
                             {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1588,7 +1673,7 @@ export default function AdminPage() {
                         </label>
                       )}
                       {promoForm.scopeType === 'Product' && (
-                        <label className="sa-field"><span>ID sản phẩm, cách nhau bằng dấu phẩy</span>
+                        <label className="sa-field sa-field-wide"><span>ID sản phẩm, cách nhau bằng dấu phẩy</span>
                           <input className="sa-input" value={promoForm.scopeProductIds} onChange={e => setPromoForm({ ...promoForm, scopeProductIds: e.target.value })} />
                         </label>
                       )}
@@ -1597,17 +1682,19 @@ export default function AdminPage() {
                       <button type="submit" className="sa-btn">Tạo khuyến mãi</button>
                       <button type="button" onClick={() => setPromoFormOpen(false)} className="sa-btn sa-btn-ghost">Đóng</button>
                     </div>
-                  </form>
+                    </form>
+                  </SparkModal>
                 )}
                 {disableTarget && (
-                  <div className="sa-card">
-                    <h3>Tắt khuyến mãi {disableTarget.code} — bắt buộc nhập lý do</h3>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <input className="sa-input" style={{ maxWidth: 420 }} placeholder="Lý do tắt khuyến mãi" value={disableReason} onChange={e => setDisableReason(e.target.value)} data-testid="admin-promo-disable-reason" />
-                      <button type="button" onClick={() => void disablePromo()} className="sa-btn sa-btn-danger">Xác nhận tắt</button>
-                      <button type="button" onClick={() => { setDisableTarget(null); setDisableReason(''); }} className="sa-btn sa-btn-ghost">Hủy</button>
-                    </div>
-                  </div>
+                  <SparkModal
+                    title={`Tắt khuyến mãi ${disableTarget.code}`}
+                    onClose={() => { setDisableTarget(null); setDisableReason(''); }}
+                    footer={<button type="button" onClick={() => void disablePromo()} className="sa-btn sa-btn-danger">Xác nhận tắt</button>}
+                  >
+                    <p className="sa-muted-text">Tắt khuyến mãi bắt buộc phải nhập lý do.</p>
+                    {promosError && <p className="sa-error">{promosError}</p>}
+                    <input className="sa-input" placeholder="Lý do tắt khuyến mãi" value={disableReason} onChange={e => setDisableReason(e.target.value)} data-testid="admin-promo-disable-reason" />
+                  </SparkModal>
                 )}
                 {!promosLoading && filteredPromos.length === 0 && !promosError && <p>Chưa có khuyến mãi.</p>}
                 {filteredPromos.length > 0 && (
@@ -1615,7 +1702,7 @@ export default function AdminPage() {
                     <table>
                       <thead><tr><th>Mã</th><th>Mô tả</th><th>Loại giảm</th><th>Giá trị</th><th>Đơn tối thiểu</th><th>Đã dùng</th><th>Hạn</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
                       <tbody>
-                        {filteredPromos.map(p => (
+                        {promosPaging.paged.map(p => (
                           <tr key={p.id}>
                             <td><span className="sa-code">{p.code}</span></td>
                             <td>{p.description ?? '—'}</td>
@@ -1640,6 +1727,9 @@ export default function AdminPage() {
                       </tbody>
                     </table>
                   </div>
+                )}
+                {filteredPromos.length > 0 && (
+                  <SaPagination page={promosPaging.safePage} totalPages={promosPaging.totalPages} total={filteredPromos.length} testid="admin-promos-pagination" onPage={setPromosPage} />
                 )}
                 {promoUsageFor && (
                   <div style={{ marginTop: '1rem' }}>
@@ -1669,17 +1759,20 @@ export default function AdminPage() {
             {tab === 'customers' && (
               <section>
                 <div className="sa-toolbar">
-                  <input className="sa-input" placeholder="Tìm email / tên / SĐT" value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} data-testid="admin-customer-search" />
-                  <select className="sa-input" value={customerTierFilter} onChange={e => setCustomerTierFilter(e.target.value)} aria-label="Lọc hạng">
-                    <option value="">Tất cả hạng</option>
-                    <option value="Member">Thường</option>
-                    <option value="Silver">Bạc</option>
-                    <option value="Gold">Vàng</option>
-                    <option value="Diamond">Kim cương</option>
-                  </select>
-                  <button type="button" onClick={() => void loadCustomers()} className="sa-btn">Tìm</button>
-                  <span className="sa-spacer" />
-                  <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  <div className="sa-toolbar-right">
+                    <input className="sa-input" placeholder="Tìm email / tên / SĐT" value={customerSearch} onChange={e => setCustomerSearch(e.target.value)} data-testid="admin-customer-search" />
+                    <select className="sa-input" value={customerTierFilter} onChange={e => setCustomerTierFilter(e.target.value)} aria-label="Lọc hạng">
+                      <option value="">Tất cả hạng</option>
+                      <option value="Member">Thường</option>
+                      <option value="Silver">Bạc</option>
+                      <option value="Gold">Vàng</option>
+                      <option value="Diamond">Kim cương</option>
+                    </select>
+                    <button type="button" onClick={() => void loadCustomers()} className="sa-btn">Tìm</button>
+                    <button type="button" className="sa-icon-btn" title="Đặt lại bộ lọc" aria-label="Đặt lại bộ lọc" onClick={resetCustomers} data-testid="admin-customers-reset-btn">↺</button>
+                    <button type="button" className="sa-icon-btn" title="Làm mới" aria-label="Làm mới" onClick={() => void loadCustomers()} data-testid="admin-customers-refresh-btn">⟳</button>
+                    <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  </div>
                 </div>
                 {customersLoading && <p>Đang tải khách hàng...</p>}
                 {customersError && <p className="sa-error">{customersError}</p>}
@@ -1689,7 +1782,7 @@ export default function AdminPage() {
                     <table>
                       <thead><tr><th>Khách hàng</th><th>Điện thoại</th><th>Hạng</th><th>Chi tiêu 12 tháng</th><th>Số đơn</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
                       <tbody>
-                        {customers.map(c => (
+                        {customersPaging.paged.map(c => (
                           <tr key={c.id}>
                             <td>
                               <span className="sa-user-cell">
@@ -1715,6 +1808,9 @@ export default function AdminPage() {
                       </tbody>
                     </table>
                   </div>
+                )}
+                {customers.length > 0 && (
+                  <SaPagination page={customersPaging.safePage} totalPages={customersPaging.totalPages} total={customers.length} testid="admin-customers-pagination" onPage={setCustomersPage} />
                 )}
                 {customerDetailLoading && <p>Đang tải chi tiết khách hàng...</p>}
                 {selectedCustomer && (
@@ -1742,6 +1838,12 @@ export default function AdminPage() {
 
             {tab === 'membership' && (
               <section>
+                <div className="sa-toolbar">
+                  <div className="sa-toolbar-right">
+                    <button type="button" className="sa-icon-btn" title="Đặt lại cấu hình (hủy thay đổi chưa lưu)" aria-label="Đặt lại cấu hình" onClick={resetMembers} data-testid="admin-members-reset-btn">↺</button>
+                    <button type="button" className="sa-icon-btn" title="Làm mới" aria-label="Làm mới" onClick={() => void loadTiers()} data-testid="admin-members-refresh-btn">⟳</button>
+                  </div>
+                </div>
                 {tiersLoading && <p>Đang tải cấu hình hội viên...</p>}
                 {tiersError && <p className="sa-error">{tiersError}</p>}
                 {tierDraft.length > 0 && (
@@ -1779,7 +1881,7 @@ export default function AdminPage() {
                     <label className="sa-field"><span>Số điểm (dương = cộng, âm = trừ; tối đa 1000/lần)</span>
                       <input className="sa-input" type="number" value={adjustPointsValue} onChange={e => setAdjustPointsValue(e.target.value)} data-testid="admin-adjust-points-input" />
                     </label>
-                    <label className="sa-field"><span>Lý do (bắt buộc)</span>
+                    <label className="sa-field sa-field-wide"><span>Lý do (bắt buộc)</span>
                       <input className="sa-input" value={adjustReason} onChange={e => setAdjustReason(e.target.value)} data-testid="admin-adjust-reason-input" />
                     </label>
                   </div>
@@ -1793,16 +1895,19 @@ export default function AdminPage() {
             {tab === 'returns' && (
               <section>
                 <div className="sa-toolbar">
-                  <input className="sa-input" placeholder="Tìm mã đơn / sản phẩm / lý do" value={returnSearch} onChange={e => setReturnSearch(e.target.value)} aria-label="Tìm yêu cầu trả hàng" />
-                  <select className="sa-input" value={returnStatusFilter} onChange={e => setReturnStatusFilter(e.target.value)} aria-label="Lọc trạng thái trả hàng">
-                    <option value="">Tất cả trạng thái</option>
-                    <option value="Pending">Chờ duyệt</option>
-                    <option value="Approved">Đã duyệt</option>
-                    <option value="Rejected">Đã từ chối</option>
-                  </select>
-                  <button type="button" onClick={() => void loadReturns()} className="sa-btn">Lọc</button>
-                  <span className="sa-spacer" />
-                  <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  <div className="sa-toolbar-right">
+                    <input className="sa-input" placeholder="Tìm mã đơn / sản phẩm / lý do" value={returnSearch} onChange={e => setReturnSearch(e.target.value)} aria-label="Tìm yêu cầu trả hàng" />
+                    <select className="sa-input" value={returnStatusFilter} onChange={e => setReturnStatusFilter(e.target.value)} aria-label="Lọc trạng thái trả hàng">
+                      <option value="">Tất cả trạng thái</option>
+                      <option value="Pending">Chờ duyệt</option>
+                      <option value="Approved">Đã duyệt</option>
+                      <option value="Rejected">Đã từ chối</option>
+                    </select>
+                    <button type="button" onClick={() => void loadReturns()} className="sa-btn">Lọc</button>
+                    <button type="button" className="sa-icon-btn" title="Đặt lại bộ lọc" aria-label="Đặt lại bộ lọc" onClick={resetReturns} data-testid="admin-returns-reset-btn">↺</button>
+                    <button type="button" className="sa-icon-btn" title="Làm mới" aria-label="Làm mới" onClick={() => void loadReturns()} data-testid="admin-returns-refresh-btn">⟳</button>
+                    <button type="button" onClick={exportCurrentTab} className="sa-btn sa-btn-ghost">⬇ Export</button>
+                  </div>
                 </div>
                 {returnsLoading && <p>Đang tải yêu cầu trả hàng...</p>}
                 {returnsError && <p className="sa-error">{returnsError}</p>}
@@ -1812,7 +1917,7 @@ export default function AdminPage() {
                     <table>
                       <thead><tr><th>Mã đơn</th><th>Sản phẩm</th><th>SL</th><th>Lý do</th><th>Trạng thái</th><th>Hoàn tiền</th><th>Thao tác</th></tr></thead>
                       <tbody>
-                        {filteredReturns.map(r => (
+                        {returnsPaging.paged.map(r => (
                           <tr key={r.id}>
                             <td><span className="sa-code">{r.orderDisplayCode ?? r.orderId}</span></td>
                             <td>{r.productName}</td>
@@ -1830,6 +1935,9 @@ export default function AdminPage() {
                       </tbody>
                     </table>
                   </div>
+                )}
+                {filteredReturns.length > 0 && (
+                  <SaPagination page={returnsPaging.safePage} totalPages={returnsPaging.totalPages} total={filteredReturns.length} testid="admin-returns-pagination" onPage={setReturnsPage} />
                 )}
                 {returnTarget && (
                   <SparkModal
@@ -1860,8 +1968,12 @@ export default function AdminPage() {
 
                 <h2 className="sa-section-title" style={{ marginTop: '2rem' }}>Nhật ký hệ thống (audit-log)</h2>
                 <div className="sa-toolbar">
-                  <input className="sa-input" placeholder="Tìm người thực hiện / hành động" value={auditSearch} onChange={e => setAuditSearch(e.target.value)} aria-label="Tìm nhật ký" />
-                  <button type="button" onClick={() => void loadAudit()} className="sa-btn sa-btn-ghost">Tải lại nhật ký</button>
+                  <div className="sa-toolbar-right">
+                    <input className="sa-input" placeholder="Tìm người thực hiện / hành động" value={auditSearch} onChange={e => setAuditSearch(e.target.value)} aria-label="Tìm nhật ký" />
+                    <button type="button" onClick={() => setAuditPage(1)} className="sa-btn">Tìm</button>
+                    <button type="button" className="sa-icon-btn" title="Đặt lại bộ lọc" aria-label="Đặt lại bộ lọc" onClick={resetAudit} data-testid="admin-returns-audit-reset-btn">↺</button>
+                    <button type="button" className="sa-icon-btn" title="Làm mới" aria-label="Làm mới" onClick={() => void loadAudit()} data-testid="admin-returns-audit-refresh-btn">⟳</button>
+                  </div>
                 </div>
                 {auditLoading && <p>Đang tải nhật ký...</p>}
                 {auditError && <p className="sa-error">{auditError}</p>}
@@ -1871,7 +1983,7 @@ export default function AdminPage() {
                     <table>
                       <thead><tr><th>Thời gian</th><th>Người thực hiện</th><th>Hành động</th><th>Đối tượng</th></tr></thead>
                       <tbody>
-                        {filteredAudit.map(a => (
+                        {auditPaging.paged.map(a => (
                           <tr key={a.id}>
                             <td>{fmtDate(a.createdAt)}</td>
                             <td>{a.actorEmail}</td>
@@ -1882,6 +1994,9 @@ export default function AdminPage() {
                       </tbody>
                     </table>
                   </div>
+                )}
+                {filteredAudit.length > 0 && (
+                  <SaPagination page={auditPaging.safePage} totalPages={auditPaging.totalPages} total={filteredAudit.length} testid="admin-returns-audit-pagination" onPage={setAuditPage} />
                 )}
               </section>
             )}
