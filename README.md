@@ -110,6 +110,30 @@ stage khác không đổi.
 > (`linh1912/DAFL_DO_AN_TOT_NGHIEP`), 2 file suite đã có sẵn trong
 > `automation/` và `Jenkinsfile` / `Jenkinsfile.auto` ở đó chạy được ngay.
 
+## Upload ảnh admin (đợt redesign form admin)
+
+- **Endpoint:** `POST /api/admin/upload` (chỉ admin — SuperAdmin, JWT như mọi
+  endpoint `/api/admin/*`), body `multipart/form-data` với field `file`
+  (alias `image`). Chỉ nhận ảnh PNG/JPEG/WebP ≤ 5MB (kiểm tra ContentType +
+  extension + magic bytes); sai trả 400 kèm message tiếng Việt.
+- **Response:** `{ "url": "http://localhost:5000/uploads/<uuid>.<ext>", "path": "/uploads/<uuid>.<ext>" }`
+  — `url` là URL **tuyệt đối tới backend :5000** (không phải tương đối), vì ảnh
+  hiển thị bằng `<img src={imageUrl}>`: URL tương đối sẽ bị trình duyệt tải từ
+  `:3000`/`:3001` mà nginx shop/admin không proxy `/uploads` nên sẽ 404.
+  Backend serve thư mục `uploads/` qua `UseStaticFiles` (`/app/uploads` trong
+  container, giữ lại bằng volume `uploads_data` trong `docker-compose.yml`).
+  Nếu đổi cổng backend (`BACKEND_PORT` khác 5000), đặt biến môi trường cho
+  backend `Uploads__PublicBaseUrl=http://localhost:<cổng>` để URL trả về đúng.
+- **Sản phẩm:** `POST/PUT /api/admin/products` nhận thêm field tùy chọn
+  `imageUrls` (mảng URL, vd URL vừa upload) → lưu vào `ImagesJson`, `imageUrl`
+  rỗng thì lấy ảnh đầu tiên làm đại diện; không gửi `imageUrls` thì giữ nguyên
+  thư viện cũ. Response admin có thêm `imageUrls` (ảnh đại diện đứng đầu).
+- **Danh mục:** `POST /api/admin/categories` nhận thêm `iconUrl` (URL ảnh hoặc
+  emoji như seed); `PUT` nhận thêm `slug` + `iconUrl` (null = giữ nguyên,
+  `iconUrl: ""` = xóa icon). Response admin có thêm `iconUrl`.
+- **Khuyến mãi/voucher: không có field ảnh** ở entity lẫn API nên form khuyến
+  mãi không có upload ảnh.
+
 ## Giới hạn còn lại của đợt tách này
 
 - Backend là 1 service chung, chưa tách.

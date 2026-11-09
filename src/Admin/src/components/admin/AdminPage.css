@@ -1161,3 +1161,498 @@
     align-items: flex-start;
   }
 }
+
+/* ==========================================================================
+   Đợt redesign form admin + upload ảnh
+   Drawer sản phẩm (trượt từ phải) / modal lớn danh mục-khuyến mãi,
+   dropzone ảnh, toggle, dropdown tự làm, toast, highlight hàng mới.
+   ========================================================================== */
+
+@keyframes sa-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sa-slide-in-right { from { transform: translateX(48px); opacity: 0.6; } to { transform: translateX(0); opacity: 1; } }
+@keyframes sa-scale-in { from { transform: scale(0.97); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes sa-toast-in { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* Overlay form: mờ + backdrop blur, animation fade 200ms. */
+.spark-admin .sa-form-overlay {
+  background: rgba(5, 28, 18, 0.55);
+  backdrop-filter: blur(2px);
+  animation: sa-fade-in 200ms ease;
+}
+
+/* Drawer sản phẩm: 600px desktop, trượt từ phải. */
+.spark-admin .sa-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 600px;
+  max-width: 100vw;
+  background: #fff;
+  box-shadow: -16px 0 48px rgba(5, 28, 18, 0.3);
+  display: flex;
+  flex-direction: column;
+  animation: sa-slide-in-right 200ms ease;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Modal lớn (danh mục / khuyến mãi): max-width 560px. */
+.spark-admin .sa-modal-lg {
+  width: 560px;
+  animation: sa-scale-in 200ms ease;
+}
+
+.spark-admin .sa-form-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.spark-admin .sa-form-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 14px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.spark-admin .sa-form-head-text h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #051c12;
+}
+
+.spark-admin .sa-form-head-text p {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+  color: var(--sa-muted);
+}
+
+.spark-admin .sa-form-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.spark-admin .sa-form-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 14px 20px;
+  background: #fff;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* Nhóm field trong form. */
+.spark-admin .sa-form-section { margin-bottom: 1.25rem; }
+.spark-admin .sa-form-section-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.spark-admin .sa-field-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.spark-admin .sa-req { color: #dc2626; }
+
+.spark-admin .sa-field-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.spark-admin .sa-hint {
+  color: var(--sa-muted);
+  font-size: 0.85rem;
+}
+
+.spark-admin .sa-count {
+  color: var(--sa-muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.spark-admin .sa-field-error {
+  color: #c62828;
+  font-size: 0.88rem;
+  margin: 4px 0 0;
+}
+
+.spark-admin .sa-input-error { border-color: #dc2626 !important; }
+.spark-admin .sa-input-error:focus { box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2) !important; }
+
+/* Ô tiền tệ: input cao 40px bo 8px + hậu tố ₫. */
+.spark-admin .sa-money-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.spark-admin .sa-money-wrap .sa-input { height: 40px; border-radius: 8px; padding-right: 2rem; }
+.spark-admin .sa-money-suffix {
+  position: absolute;
+  right: 12px;
+  color: #6b7280;
+  font-size: 0.95rem;
+  pointer-events: none;
+}
+
+/* Input trong form mới: cao 40px bo 8px. */
+.spark-admin .sa-form-body .sa-input { min-height: 40px; border-radius: 8px; }
+
+/* Nút +/- tồn kho. */
+.spark-admin .sa-stepper { display: flex; align-items: stretch; gap: 0; }
+.spark-admin .sa-stepper-btn {
+  width: 40px;
+  flex-shrink: 0;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: #374151;
+}
+.spark-admin .sa-stepper-btn:first-child { border-radius: 8px 0 0 8px; border-right: none; }
+.spark-admin .sa-stepper-btn:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+.spark-admin .sa-stepper-btn:hover { background: #f7fee7; }
+.spark-admin .sa-stepper-input { border-radius: 0 !important; text-align: center; }
+
+/* Toggle switch. */
+.spark-admin .sa-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: #374151;
+}
+.spark-admin .sa-toggle-knob {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: #d1d5db;
+  transition: background 150ms ease;
+}
+.spark-admin .sa-toggle-knob::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 150ms ease;
+}
+.spark-admin .sa-toggle-on .sa-toggle-knob { background: var(--sa-green-dark); }
+.spark-admin .sa-toggle-on .sa-toggle-knob::after { transform: translateX(20px); }
+.spark-admin .sa-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Dropdown danh mục tự làm. */
+.spark-admin .sa-picker { position: relative; }
+.spark-admin .sa-picker-trigger {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  height: 40px;
+  text-align: left;
+  cursor: pointer;
+  color: #111827;
+}
+.spark-admin .sa-picker-placeholder { color: #9ca3af; }
+.spark-admin .sa-picker-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(5, 28, 18, 0.2);
+  padding: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.spark-admin .sa-picker-search { margin-bottom: 6px; }
+.spark-admin .sa-picker-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+.spark-admin .sa-picker-option:hover { background: #f7fee7; }
+.spark-admin .sa-picker-selected { background: #f7fee7; font-weight: 700; }
+.spark-admin .sa-picker-empty { padding: 8px 10px; color: var(--sa-muted); font-size: 0.9rem; }
+
+/* Dropzone upload ảnh. */
+.spark-admin .sa-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.spark-admin .sa-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 16px;
+  border: 2px dashed #d1d5db;
+  border-radius: 12px;
+  background: #f9fafb;
+  cursor: pointer;
+  text-align: center;
+}
+.spark-admin .sa-dropzone:hover,
+.spark-admin .sa-dropzone:focus-visible { border-color: var(--sa-green-dark); background: #f7fee7; outline: none; }
+.spark-admin .sa-dropzone-over { border-color: var(--sa-green-dark); background: #f7fee7; }
+.spark-admin .sa-dropzone-icon { font-size: 1.6rem; }
+.spark-admin .sa-dropzone-text { font-weight: 600; color: #374151; }
+.spark-admin .sa-dropzone-sub { font-size: 0.85rem; color: var(--sa-muted); }
+
+.spark-admin .sa-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.spark-admin .sa-thumb-item {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  background: #f1f5f9;
+  cursor: grab;
+}
+.spark-admin .sa-thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.spark-admin .sa-thumb-ph { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; font-size: 1.5rem; }
+.spark-admin .sa-thumb-main {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  padding: 2px 4px;
+  background: rgba(5, 28, 18, 0.85);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+}
+.spark-admin .sa-thumb-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: none;
+  gap: 4px;
+}
+.spark-admin .sa-thumb-item:hover .sa-thumb-actions { display: flex; }
+.spark-admin .sa-thumb-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.95);
+  color: #374151;
+  font-size: 0.8rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.spark-admin .sa-thumb-remove:hover { background: #fee2e2; color: #dc2626; }
+.spark-admin .sa-thumb-progress {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+  color: #374151;
+}
+.spark-admin .sa-progress-bar {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.spark-admin .sa-progress-bar > span { display: block; height: 100%; background: var(--sa-green-dark); }
+.spark-admin .sa-thumb-error { border-color: #fca5a5; }
+.spark-admin .sa-thumb-retry {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  text-align: center;
+}
+.spark-admin .sa-thumb-err-text { font-size: 0.72rem; color: #c62828; }
+.spark-admin .sa-thumb-retry-btn { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+
+.spark-admin .sa-link-btn {
+  margin-top: 10px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--sa-green-dark);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.spark-admin .sa-link-row { display: flex; gap: 8px; margin-top: 8px; }
+.spark-admin .sa-link-row .sa-input { flex: 1; }
+
+/* Segmented control loại giảm. */
+.spark-admin .sa-segmented {
+  display: inline-flex;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.spark-admin .sa-segmented-btn {
+  border: none;
+  background: #fff;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: #374151;
+  white-space: nowrap;
+}
+.spark-admin .sa-segmented-btn + .sa-segmented-btn { border-left: 1px solid #d1d5db; }
+.spark-admin .sa-segmented-active { background: var(--sa-green-dark); color: #fff; font-weight: 700; }
+.spark-admin .sa-segmented-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.spark-admin .sa-segmented-btn:disabled.sa-segmented-active { opacity: 1; }
+
+.spark-admin .sa-code-row { display: flex; gap: 8px; align-items: stretch; }
+.spark-admin .sa-code-row .sa-input { flex: 1; text-transform: uppercase; }
+
+/* Badge % giảm. */
+.spark-admin .sa-discount-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Preview thẻ sản phẩm realtime. */
+.spark-admin .sa-product-preview {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #f9fafb;
+}
+.spark-admin .sa-preview-img {
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  object-fit: cover;
+  background: #e5e7eb;
+}
+.spark-admin .sa-preview-ph { display: inline-flex; align-items: center; justify-content: center; font-size: 1.6rem; }
+.spark-admin .sa-preview-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.spark-admin .sa-preview-info strong { overflow-wrap: anywhere; }
+.spark-admin .sa-preview-info small { color: var(--sa-muted); }
+.spark-admin .sa-preview-price { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.spark-admin .sa-preview-price s { color: #9ca3af; font-size: 0.88rem; }
+
+/* Toast (góc phải dưới). */
+.spark-admin .sa-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 40px));
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--sa-green-dark);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  box-shadow: 0 12px 32px rgba(5, 28, 18, 0.35);
+  animation: sa-toast-in 200ms ease;
+}
+.spark-admin .sa-toast button {
+  background: none;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0;
+}
+
+/* Hàng mới lưu highlight 2 giây. */
+.spark-admin .sa-row-highlight { background: #f7fee7 !important; }
+
+/* Textarea mô tả tự giãn. */
+.spark-admin .sa-textarea-auto { resize: none; overflow: hidden; line-height: 1.6; }
+
+/* Mobile: drawer thành bottom sheet full màn hình cao 95vh; lưới form 1 cột. */
+@media (max-width: 640px) {
+  .spark-admin .sa-drawer {
+    top: auto;
+    left: 0;
+    width: 100%;
+    height: 95vh;
+    max-height: 95vh;
+    border-radius: 16px 16px 0 0;
+  }
+  .spark-admin .sa-form-overlay { padding: 0; align-items: flex-end; }
+  .spark-admin .sa-form-body .sa-form-grid { grid-template-columns: 1fr; }
+  .spark-admin .sa-code-row { flex-direction: column; }
+}

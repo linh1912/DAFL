@@ -12,14 +12,20 @@ COPY package.json package-lock.json ./
 COPY Frontend/package.json ./Frontend/package.json
 COPY Admin/package.json ./Admin/package.json
 COPY Shared/package.json ./Shared/package.json
-RUN npm ci
+# --include=dev: ép cài cả devDependencies (typescript, vite). Nếu môi
+# trường build lược devDeps thì bước build dưới sẽ lỗi 127 (không thấy tsc).
+RUN npm ci --include=dev
 
 # Chỉ copy code admin + code dùng chung (không copy code shop).
 COPY Admin ./Admin
 COPY Shared ./Shared
 
 WORKDIR /app/Admin
-RUN npm run build
+# Gọi trực tiếp binary đã hoist ở /app/node_modules/.bin thay vì
+# `npm run build`: npm trong image node:20-alpine không đưa .bin của
+# workspace root vào PATH khi chạy script trong thư mục con, gây lỗi 127
+# (sh: tsc: not found) dù `npm ci` đã cài đủ. Cách này đã kiểm chứng.
+RUN ../node_modules/.bin/tsc && ../node_modules/.bin/vite build
 
 # Stage 2: Serve with Nginx Alpine
 FROM nginx:1.25-alpine AS runtime

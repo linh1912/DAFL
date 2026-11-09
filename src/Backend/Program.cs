@@ -27,6 +27,7 @@ using DAFL.Backend.Infrastructure.Payments;
 using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.OpenApi.Models;
 using StackExchange.Redis;
 
@@ -170,6 +171,18 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowFrontend");
+
+// Serve ảnh đã upload (đợt redesign form admin): GET /uploads/<file> trỏ tới
+// thư mục "uploads" dưới thư mục chạy của backend (trong container là /app/uploads,
+// được giữ lại qua volume uploads_data trong docker-compose.yml).
+// Đặt trước middleware JWT: ảnh sản phẩm là public, không cần đăng nhập, không chạm DB.
+var uploadsRoot = UploadImageHelper.GetUploadsRoot();
+Directory.CreateDirectory(uploadsRoot);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(uploadsRoot),
+    RequestPath = "/uploads"
+});
 
 // JWT authentication middleware (CN-02): có header "Authorization: Bearer <token>" hợp lệ
 // thì gán userId vào HttpContext.Items["CurrentUserId"] để các endpoint cần đăng nhập đọc qua GetCurrentUserId().
@@ -1198,12 +1211,69 @@ app.MapGet("/api/admin/reports/revenue", async (DateTime? from, DateTime? to, Ht
 .WithSummary("Báo cáo: doanh thu theo ngày, sản phẩm bán chạy, tỉ lệ hủy, tỉ lệ dùng voucher")
 .WithTags("Admin - Quản trị");
 
+// --- Upload ảnh (admin) — đợt redesign form admin ---
+// POST /api/admin/upload nhận multipart/form-data, field "file" (alias "image").
+// Chỉ ảnh PNG/JPEG/WebP ≤ 5MB (kiểm tra ContentType + extension + magic bytes),
+// lưu thành <uuid>.<ext> trong thư mục uploads và trả về URL TUYỆT ĐỐI tới backend
+// (xem UploadImageHelper.BuildPublicUploadUrl): ảnh hiển thị bằng <img src={imageUrl}>
+// nên URL tương đối "/uploads/..." sẽ bị trình duyệt tải từ :3000/:3001 — nginx của
+// shop/admin không có location /uploads nên sẽ 404. Không ghi audit log: upload
+// không phải nghiệp vụ thay đổi dữ liệu (ảnh chỉ được tham chiếu khi tạo/sửa sản phẩm
+// hoặc danh mục — lúc đó mới có audit ADMIN_CREATE/UPDATE_PRODUCT/CATEGORY).
+app.MapPost("/api/admin/upload", async (HttpContext httpContext, AppDbContext dbContext, IConfiguration configuration) =>
+{
+    var (_, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+
+    if (!httpContext.Request.HasFormContentType)
+    {
+        return Results.Json(new { success = false, message = "Yêu cầu phải là multipart/form-data với field \"file\"." },
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    IFormFile? file;
+    try
+    {
+        var form = await httpContext.Request.ReadFormAsync();
+        file = form.Files["file"] ?? form.Files["image"];
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Upload: cannot read multipart form.");
+        return Results.Json(new { success = false, message = "Không đọc được dữ liệu upload. Hãy gửi lại dưới dạng multipart/form-data." },
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    var (invalidMessage, extension) = UploadImageHelper.ValidateImage(file);
+    if (invalidMessage != null)
+    {
+        return Results.Json(new { success = false, message = invalidMessage },
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    var fileName = $"{Guid.NewGuid():N}{extension}";
+    var uploadsDir = UploadImageHelper.GetUploadsRoot();
+    Directory.CreateDirectory(uploadsDir);
+    var filePath = Path.Combine(uploadsDir, fileName);
+    await using (var stream = new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+    {
+        await file!.CopyToAsync(stream);
+    }
+
+    var relativePath = $"/uploads/{fileName}";
+    var absoluteUrl = UploadImageHelper.BuildPublicUploadUrl(httpContext, configuration, fileName);
+    return Results.Json(new { url = absoluteUrl, path = relativePath });
+})
+.WithName("AdminUploadImage")
+.WithSummary("Admin upload ảnh sản phẩm/danh mục (PNG/JPEG/WebP ≤ 5MB), trả về URL tuyệt đối tới backend")
+.WithTags("Admin - Quản trị");
+
 // --- Sản phẩm / Danh mục (admin) ---
 app.MapPost("/api/admin/products", async (CreateProductRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
 {
     var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
     if (error != null) return error;
-    var result = await mediator.Send(new CreateProductCommand(request.Name, request.CategoryId, request.Price, request.OriginalPrice, request.Stock, request.Description, request.ImageUrl, request.Slug));
+    var result = await mediator.Send(new CreateProductCommand(request.Name, request.CategoryId, request.Price, request.OriginalPrice, request.Stock, request.Description, request.ImageUrl, request.Slug, request.ImageUrls));
     if (result.Success)
     {
         await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_CREATE_PRODUCT", "Product", result.Data!.Id.ToString(),
@@ -1220,7 +1290,7 @@ app.MapPut("/api/admin/products/{id:guid}", async (Guid id, UpdateProductRequest
     var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
     if (error != null) return error;
     var before = await dbContext.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
-    var result = await mediator.Send(new UpdateProductCommand(id, request.Name, request.CategoryId, request.Price, request.OriginalPrice, request.Stock, request.Description, request.ImageUrl, request.IsActive));
+    var result = await mediator.Send(new UpdateProductCommand(id, request.Name, request.CategoryId, request.Price, request.OriginalPrice, request.Stock, request.Description, request.ImageUrl, request.IsActive, request.ImageUrls));
     if (result.Success)
     {
         await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_UPDATE_PRODUCT", "Product", id.ToString(),
@@ -1256,7 +1326,7 @@ app.MapGet("/api/admin/categories", async (HttpContext httpContext, AppDbContext
     var categories = await dbContext.Categories.AsNoTracking().OrderBy(c => c.SortOrder).ThenBy(c => c.Name).ToListAsync();
     var counts = await dbContext.Products.Where(p => !p.IsDeleted).GroupBy(p => p.CategoryId)
         .Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count);
-    var dtos = categories.Select(c => new AdminCategoryDto(c.Id, c.Name, c.Slug, c.Description, c.IsActive, c.SortOrder, counts.GetValueOrDefault(c.Id))).ToList();
+    var dtos = categories.Select(c => new AdminCategoryDto(c.Id, c.Name, c.Slug, c.Description, c.IsActive, c.SortOrder, counts.GetValueOrDefault(c.Id), c.IconUrl)).ToList();
     return Results.Ok(ApiResponse<List<AdminCategoryDto>>.Ok(dtos));
 })
 .WithName("AdminListCategories")
@@ -1267,7 +1337,7 @@ app.MapPost("/api/admin/categories", async (CreateCategoryRequest request, HttpC
 {
     var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
     if (error != null) return error;
-    var result = await mediator.Send(new CreateCategoryCommand(request.Name, request.Description, request.Slug, request.SortOrder));
+    var result = await mediator.Send(new CreateCategoryCommand(request.Name, request.Description, request.Slug, request.SortOrder, request.IconUrl));
     if (result.Success)
     {
         await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_CREATE_CATEGORY", "Category", result.Data!.Id.ToString(),
@@ -1283,7 +1353,7 @@ app.MapPut("/api/admin/categories/{id:guid}", async (Guid id, UpdateCategoryRequ
 {
     var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
     if (error != null) return error;
-    var result = await mediator.Send(new UpdateCategoryCommand(id, request.Name, request.Description, request.IsActive, request.SortOrder));
+    var result = await mediator.Send(new UpdateCategoryCommand(id, request.Name, request.Description, request.IsActive, request.SortOrder, request.Slug, request.IconUrl));
     if (result.Success)
     {
         await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_UPDATE_CATEGORY", "Category", id.ToString(),
@@ -1694,13 +1764,13 @@ public record ValidateVoucherRequest(string? GoodsVoucherCode, string? FreeShipV
 
 public record CreateReturnRequestBody(Guid ProductId, int Quantity, string Reason, string? Note);
 
-public record CreateProductRequest(string Name, Guid CategoryId, decimal Price, decimal? OriginalPrice, int Stock, string Description, string ImageUrl, string? Slug = null);
+public record CreateProductRequest(string Name, Guid CategoryId, decimal Price, decimal? OriginalPrice, int Stock, string Description, string ImageUrl, string? Slug = null, List<string>? ImageUrls = null);
 
-public record UpdateProductRequest(string Name, Guid CategoryId, decimal Price, decimal? OriginalPrice, int Stock, string Description, string ImageUrl, bool IsActive);
+public record UpdateProductRequest(string Name, Guid CategoryId, decimal Price, decimal? OriginalPrice, int Stock, string Description, string ImageUrl, bool IsActive, List<string>? ImageUrls = null);
 
-public record CreateCategoryRequest(string Name, string? Description, string? Slug = null, int SortOrder = 0);
+public record CreateCategoryRequest(string Name, string? Description, string? Slug = null, int SortOrder = 0, string? IconUrl = null);
 
-public record UpdateCategoryRequest(string Name, string? Description, bool IsActive, int SortOrder);
+public record UpdateCategoryRequest(string Name, string? Description, bool IsActive, int SortOrder, string? Slug = null, string? IconUrl = null);
 
 public record ChangeOrderStatusRequest(string ToStatus, string? Carrier, string? TrackingCode, string? Note, string? InternalNote);
 
@@ -1725,3 +1795,102 @@ public record UpdateMembershipConfigRequest(List<MembershipConfigItemDto> Tiers)
 public record ResolveReturnRequest(bool Approve, string? AdminNote);
 
 public record RecordRefundRequest(string TransactionCode);
+
+/// <summary>
+/// Upload ảnh admin (đợt redesign form admin): validate + đường dẫn thư mục uploads
+/// + URL công khai trả về cho client. Không dùng thư viện ngoài — chỉ API .NET 8 sẵn có.
+/// </summary>
+public static class UploadImageHelper
+{
+    /// <summary>Dung lượng tối đa 1 file ảnh: 5 MB.</summary>
+    public const long MaxFileSizeBytes = 5L * 1024 * 1024;
+
+    private static readonly Dictionary<string, string> AllowedByExtension = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [".png"] = "image/png",
+        [".jpg"] = "image/jpeg",
+        [".jpeg"] = "image/jpeg",
+        [".webp"] = "image/webp"
+    };
+
+    /// <summary>Thư mục lưu ảnh: "uploads" dưới thư mục chạy của backend (trong container là /app/uploads).</summary>
+    public static string GetUploadsRoot() => Path.Combine(AppContext.BaseDirectory, "uploads");
+
+    /// <summary>
+    /// Validate file ảnh: bắt buộc có file, ≤ 5MB, extension + ContentType thuộc
+    /// PNG/JPEG/WebP và magic bytes đầu file khớp đúng định dạng đó.
+    /// Trả về (thông báo lỗi, extension đã chuẩn hóa thường) — lỗi = null khi hợp lệ.
+    /// </summary>
+    public static (string? Error, string Extension) ValidateImage(IFormFile? file)
+    {
+        if (file == null || file.Length == 0)
+            return ("Vui lòng chọn file ảnh để tải lên (field \"file\").", string.Empty);
+        if (file.Length > MaxFileSizeBytes)
+            return ("File ảnh vượt quá 5MB. Vui lòng chọn ảnh nhỏ hơn.", string.Empty);
+
+        var extension = Path.GetExtension(file.FileName ?? string.Empty).ToLowerInvariant();
+        if (!AllowedByExtension.TryGetValue(extension, out var expectedContentType))
+            return ("Chỉ chấp nhận file ảnh .png, .jpg, .jpeg, .webp.", string.Empty);
+        if (!string.Equals(file.ContentType?.Trim(), expectedContentType, StringComparison.OrdinalIgnoreCase))
+            return ("Định dạng ảnh không hợp lệ. Chỉ chấp nhận PNG, JPEG, WebP.", string.Empty);
+
+        // Magic bytes: PNG 89 50 4E 47 0D 0A 1A 0A; JPEG FF D8 FF; WebP "RIFF"...."WEBP".
+        // Đọc tối đa 12 byte đầu — file rỗng đã bị loại ở trên nên luôn đọc được ít nhất 1 byte.
+        var header = new byte[12];
+        using var stream = file.OpenReadStream();
+        var read = stream.Read(header, 0, header.Length);
+        var valid = expectedContentType switch
+        {
+            "image/png" => read >= 8
+                && header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47
+                && header[4] == 0x0D && header[5] == 0x0A && header[6] == 0x1A && header[7] == 0x0A,
+            "image/jpeg" => read >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF,
+            "image/webp" => read >= 12
+                && header[0] == (byte)'R' && header[1] == (byte)'I' && header[2] == (byte)'F' && header[3] == (byte)'F'
+                && header[8] == (byte)'W' && header[9] == (byte)'E' && header[10] == (byte)'B' && header[11] == (byte)'P',
+            _ => false
+        };
+        if (!valid)
+            return ("Nội dung file không phải ảnh PNG/JPEG/WebP hợp lệ.", string.Empty);
+        return (null, extension);
+    }
+
+    /// <summary>
+    /// URL tuyệt đối trỏ tới file đã upload, để FE gán thẳng vào &lt;img src&gt; / ImageUrl.
+    /// Vì sao không trả URL tương đối "/uploads/...": trình duyệt sẽ tải ảnh từ origin
+    /// đang mở (:3000 shop / :3001 admin) mà nginx của 2 app đó không có location
+    /// /uploads nên sẽ 404 — chỉ backend :5000 mới serve thư mục này (UseStaticFiles).
+    /// Cách tính host:
+    /// - Ưu tiên cấu hình Uploads:PublicBaseUrl (biến môi trường Uploads__PublicBaseUrl),
+    ///   vd http://localhost:5000 — dùng khi chạy ở cổng backend khác mặc định.
+    /// - Mặc định lấy scheme + host từ request. LƯU Ý: nginx shop/admin proxy /api về
+    ///   backend nhưng giữ nguyên Host gốc ($host) nên request qua :3000/:3001 sẽ thấy
+    ///   Host = localhost:3000/3001 (vite dev :5173 tương tự); cổng đó bị đổi về cổng
+    ///   public của backend (BACKEND_PORT, mặc định 5000). Gọi thẳng :5000 hoặc qua vite
+    ///   proxy (changeOrigin=true) thì Host đã là localhost:5000 nên giữ nguyên.
+    /// </summary>
+    public static string BuildPublicUploadUrl(HttpContext http, IConfiguration configuration, string fileName)
+    {
+        var relativePath = $"/uploads/{fileName}";
+        var configured = configuration["Uploads:PublicBaseUrl"]?.Trim().TrimEnd('/');
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured + relativePath;
+
+        var scheme = http.Request.Headers.TryGetValue("X-Forwarded-Proto", out var forwardedProto)
+                && !string.IsNullOrWhiteSpace(forwardedProto)
+            ? forwardedProto.ToString() : http.Request.Scheme;
+        var host = http.Request.Host.Host;
+        var port = http.Request.Host.Port;
+        if (IsLocalHost(host) && port is 3000 or 3001 or 5173)
+        {
+            port = int.TryParse(Environment.GetEnvironmentVariable("BACKEND_PORT"), out var backendPort)
+                ? backendPort : 5000;
+        }
+        var authority = port.HasValue ? $"{host}:{port.Value}" : host;
+        return $"{scheme}://{authority}{relativePath}";
+    }
+
+    private static bool IsLocalHost(string host)
+        => host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || host == "127.0.0.1" || host == "::1";
+}

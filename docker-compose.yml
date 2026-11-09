@@ -86,6 +86,10 @@ services:
       - PayOS__ClientId=${PAYOS_CLIENT_ID:-demo_client_id}
       - PayOS__ApiKey=${PAYOS_API_KEY:-demo_api_key}
       - PayOS__ChecksumKey=${PAYOS_CHECKSUM_KEY:-demo_checksum_key}
+    volumes:
+      # Ảnh admin upload (POST /api/admin/upload) lưu ở /app/uploads trong container;
+      # volume giữ ảnh lại khi rebuild/recreate container backend.
+      - uploads_data:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,3 +136,5 @@ networks:
 volumes:
   postgres_data:
     name: dafl_postgres_data
+  uploads_data:
+    name: dafl_uploads_data

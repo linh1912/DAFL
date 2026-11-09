@@ -218,14 +218,15 @@ describe('AdminPage', () => {
       expect(screen.getByTestId('admin-product-form')).toBeInTheDocument();
     });
     expect(screen.queryByTestId('admin-product-detail')).not.toBeInTheDocument();
-    // Form sửa giờ mở trong MODAL (không còn inline trên bảng): modal có overlay
-    // che phủ, form nằm bên trong modal, bảng vẫn còn trong DOM phía dưới.
+    // Form sửa giờ mở trong DRAWER (không còn inline trên bảng, không còn modal):
+    // drawer có overlay che phủ, form nằm bên trong drawer, bảng vẫn còn trong DOM phía dưới.
     const formModal = screen.getByTestId('admin-product-form-modal');
     expect(formModal).toHaveAttribute('role', 'dialog');
-    expect(formModal).toHaveClass('sa-modal');
+    expect(formModal).toHaveClass('sa-drawer');
     expect(formModal.closest('.sa-modal-overlay')).not.toBeNull();
     expect(within(formModal).getByTestId('admin-product-form')).toBeInTheDocument();
-    expect(screen.getByText('Son kem 3CE')).toBeInTheDocument();
+    // Tên SP xuất hiện cả ở bảng và ở khối preview trong drawer.
+    expect(screen.getAllByText('Son kem 3CE').length).toBeGreaterThan(0);
   });
 
   it('Danh mục: bấm mắt mở modal chi tiết + nút Sửa mở form', async () => {
@@ -497,7 +498,7 @@ describe('AdminPage', () => {
     expect(screen.getByText('Khách 01')).toBeInTheDocument();
   });
 
-  it('Form Sản phẩm: bấm Thêm mới mở MODAL (bảng vẫn trong DOM phía dưới)', async () => {
+  it('Form Sản phẩm: bấm Thêm mới mở DRAWER (bảng vẫn trong DOM phía dưới)', async () => {
     mockFetchAdmin(urlStr => {
       if (urlStr.includes('/api/products')) return mkProducts(1);
       if (urlStr.includes('/api/admin/categories')) return mkCategories(1);
@@ -520,7 +521,7 @@ describe('AdminPage', () => {
     });
     const formModal = screen.getByTestId('admin-product-form-modal');
     expect(formModal).toHaveAttribute('role', 'dialog');
-    expect(formModal).toHaveClass('sa-modal');
+    expect(formModal).toHaveClass('sa-drawer');
     expect(formModal.closest('.sa-modal-overlay')).not.toBeNull();
     const form = within(formModal).getByTestId('admin-product-form');
     expect(form).toBeInTheDocument();
@@ -1046,4 +1047,265 @@ describe('AdminPage', () => {
       expect(calledWith('/api/admin/orders/o1/cancel', 'POST')).toBe(true);
     });
   });
+
+  // ---------- Đợt redesign form admin + upload ảnh (drawer/modal, dropzone, validate, toast) ----------
+  const openProductAddForm = async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/products')) return mkProducts(1);
+      if (urlStr.includes('/api/admin/categories')) return mkCategories(1);
+      return undefined;
+    });
+    renderAdmin();
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-products')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-products'));
+    await waitFor(() => {
+      expect(screen.getByText('Sản phẩm 01')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-product-add-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-product-form-modal')).toBeInTheDocument();
+    });
+  };
+
+  it('Form Sản phẩm mới: drawer + autofocus ô tên + dropzone có input file thật + preview + toggle', async () => {
+    await openProductAddForm();
+    const drawer = screen.getByTestId('admin-product-form-modal');
+    expect(drawer).toHaveAttribute('role', 'dialog');
+    expect(drawer).toHaveAttribute('aria-modal', 'true');
+    expect(drawer).toHaveClass('sa-drawer');
+    expect(drawer.closest('.sa-modal-overlay')).not.toBeNull();
+    // Autofocus ô tên khi mở.
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-product-name-input')).toHaveFocus();
+    });
+    // Dropzone + input file thật (visually-hidden, không display:none).
+    const dropzone = screen.getByTestId('admin-product-image-dropzone');
+    expect(dropzone).toBeInTheDocument();
+    const fileInput = screen.getByTestId('admin-product-image-input');
+    expect(fileInput).toHaveAttribute('type', 'file');
+    expect(fileInput).not.toHaveStyle('display: none');
+    expect(dropzone).toContainElement(fileInput);
+    // Bộ đếm tên, toggle trạng thái, preview realtime, nút +/- tồn kho, link dán URL.
+    expect(screen.getByTestId('admin-product-name-count')).toHaveTextContent('0/120');
+    expect(screen.getByTestId('admin-product-status-toggle')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-product-preview')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-product-stock-minus-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-product-stock-plus-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-product-image-link-toggle')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('admin-product-image-link-toggle'));
+    expect(screen.getByTestId('admin-product-image-url-input')).toBeInTheDocument();
+  });
+
+  it('Form Sản phẩm: Lưu khi trống hiện lỗi từng ô (tên/giá/danh mục), không gọi POST, form vẫn mở', async () => {
+    // Không có danh mục nào -> nút Thêm để trống categoryId, lỗi danh mục mới hiện.
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/products')) return mkProducts(1);
+      if (urlStr.includes('/api/admin/categories')) return [];
+      return undefined;
+    });
+    renderAdmin();
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-products')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-products'));
+    await waitFor(() => {
+      expect(screen.getByText('Sản phẩm 01')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-product-add-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-product-form-modal')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-product-save-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-product-name-error')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('admin-product-name-error')).toHaveTextContent('3 đến 120 ký tự');
+    expect(screen.getByTestId('admin-product-price-error')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-product-category-error')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-product-form-modal')).toBeInTheDocument();
+    expect(calledWith('/api/admin/products', 'POST')).toBe(false);
+  });
+
+  it('Form Sản phẩm: gõ giá bán + giá gốc tự hiện "Giảm 20%" + tiền định dạng dấu chấm + +/- tồn kho', async () => {
+    await openProductAddForm();
+    fireEvent.change(screen.getByTestId('admin-product-price-input'), { target: { value: '200000' } });
+    fireEvent.change(screen.getByTestId('admin-product-original-price-input'), { target: { value: '250000' } });
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-product-discount-badge')).toHaveTextContent('Giảm 20%');
+    });
+    expect(screen.getByTestId('admin-product-price-input')).toHaveValue('200.000');
+    expect(screen.getByTestId('admin-product-original-price-input')).toHaveValue('250.000');
+    fireEvent.change(screen.getByTestId('admin-product-name-input'), { target: { value: 'Son kem' } });
+    expect(screen.getByTestId('admin-product-name-count')).toHaveTextContent('7/120');
+    expect(screen.getByTestId('admin-product-preview')).toHaveTextContent('Son kem');
+    fireEvent.click(screen.getByTestId('admin-product-stock-plus-btn'));
+    expect(screen.getByTestId('admin-product-stock-input')).toHaveValue('1');
+    fireEvent.click(screen.getByTestId('admin-product-stock-minus-btn'));
+    expect(screen.getByTestId('admin-product-stock-input')).toHaveValue('0');
+    fireEvent.click(screen.getByTestId('admin-product-stock-minus-btn'));
+    expect(screen.getByTestId('admin-product-stock-input')).toHaveValue('0');
+  });
+
+  it('Form Sản phẩm: Lưu hợp lệ gọi POST kèm imageUrls + toast thành công + đóng form', async () => {
+    await openProductAddForm();
+    fireEvent.change(screen.getByTestId('admin-product-name-input'), { target: { value: 'Son kem mới' } });
+    fireEvent.click(screen.getByTestId('admin-product-category-select'));
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Tìm danh mục...')).toBeInTheDocument();
+    });
+    fireEvent.click(within(screen.getByTestId('admin-product-form')).getByRole('option', { name: 'Danh mục 01' }));
+    fireEvent.change(screen.getByTestId('admin-product-price-input'), { target: { value: '250000' } });
+    fireEvent.change(screen.getByTestId('admin-product-stock-input'), { target: { value: '5' } });
+    fireEvent.click(screen.getByTestId('admin-product-save-btn'));
+    await waitFor(() => {
+      expect(calledWith('/api/admin/products', 'POST')).toBe(true);
+    });
+    const postCall = fetchCalls().find(([url, init]) => String(url).includes('/api/admin/products') && (init as { method?: string } | undefined)?.method === 'POST');
+    expect(postCall).toBeDefined();
+    const body = JSON.parse(String((postCall as [unknown, { body: string }])[1].body));
+    expect(body.name).toBe('Son kem mới');
+    expect(body.price).toBe(250000);
+    expect(body.stock).toBe(5);
+    expect(body.imageUrls).toEqual([]);
+    expect(body.imageUrl).toBe('');
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-toast')).toHaveTextContent('Đã thêm sản phẩm thành công.');
+    });
+    expect(screen.queryByTestId('admin-product-form-modal')).toBeNull();
+  });
+
+  it('Form Sản phẩm: đã sửa mà bấm Hủy thì hỏi "chưa lưu" (Ở lại / Thoát)', async () => {
+    await openProductAddForm();
+    fireEvent.change(screen.getByTestId('admin-product-name-input'), { target: { value: 'Son mới' } });
+    fireEvent.click(screen.getByTestId('admin-product-cancel-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-confirm-modal')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Bạn có thay đổi chưa lưu. Thoát không?')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-confirm-no-btn')).toHaveTextContent('Ở lại');
+    expect(screen.getByTestId('admin-confirm-yes-btn')).toHaveTextContent('Thoát');
+    fireEvent.click(screen.getByTestId('admin-confirm-no-btn'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('admin-confirm-modal')).toBeNull();
+    });
+    expect(screen.getByTestId('admin-product-form-modal')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('admin-product-cancel-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-confirm-modal')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-confirm-yes-btn'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('admin-product-form-modal')).toBeNull();
+    });
+  });
+
+  it('Form Sản phẩm: bấm ESC khi chưa sửa thì đóng luôn, không hỏi', async () => {
+    await openProductAddForm();
+    fireEvent.keyDown(screen.getByTestId('admin-product-name-input'), { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByTestId('admin-product-form-modal')).toBeNull();
+    });
+    expect(screen.queryByTestId('admin-confirm-modal')).toBeNull();
+  });
+
+  it('Form Sản phẩm: dán link ảnh thêm thumbnail, đặt ảnh chính đổi thứ tự, xóa ảnh', async () => {
+    await openProductAddForm();
+    const form = screen.getByTestId('admin-product-form');
+    fireEvent.click(screen.getByTestId('admin-product-image-link-toggle'));
+    fireEvent.change(screen.getByTestId('admin-product-image-url-input'), { target: { value: 'https://example.com/a.jpg' } });
+    fireEvent.click(within(form).getByText('Thêm'));
+    fireEvent.click(screen.getByTestId('admin-product-image-link-toggle'));
+    fireEvent.change(screen.getByTestId('admin-product-image-url-input'), { target: { value: 'https://example.com/b.jpg' } });
+    fireEvent.click(within(form).getByText('Thêm'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-product-image-thumb-0')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('admin-product-image-thumb-1')).toBeInTheDocument();
+    expect(screen.getByText('Ảnh chính')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('admin-product-image-set-main-btn-1'));
+    expect(within(screen.getByTestId('admin-product-image-thumb-0')).getByRole('img')).toHaveAttribute('src', 'https://example.com/b.jpg');
+    fireEvent.click(screen.getByTestId('admin-product-image-remove-btn-0'));
+    expect(screen.queryByTestId('admin-product-image-thumb-1')).toBeNull();
+    expect(screen.getByTestId('admin-product-image-thumb-0')).toBeInTheDocument();
+  });
+
+  it('Form Danh mục: slug tự sinh từ tên, sửa tay slug thì dừng tự sinh; lưu gọi POST kèm slug + iconUrl', async () => {
+    mockFetchAdmin(urlStr => {
+      if (urlStr.includes('/api/admin/categories')) return mkCategories(1);
+      return undefined;
+    });
+    renderAdmin();
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-categories')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-categories'));
+    await waitFor(() => {
+      expect(screen.getByText('Danh mục 01')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-category-add-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-category-form-modal')).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByTestId('admin-category-name-input'), { target: { value: 'Son Môi Mới' } });
+    expect(screen.getByTestId('admin-category-slug-input')).toHaveValue('son-moi-moi');
+    fireEvent.change(screen.getByTestId('admin-category-slug-input'), { target: { value: 'son-moi-rieng' } });
+    fireEvent.change(screen.getByTestId('admin-category-name-input'), { target: { value: 'Son Môi Khác' } });
+    expect(screen.getByTestId('admin-category-slug-input')).toHaveValue('son-moi-rieng');
+    fireEvent.click(screen.getByTestId('admin-category-image-link-toggle'));
+    fireEvent.change(screen.getByTestId('admin-category-image-url-input'), { target: { value: 'https://example.com/cat.jpg' } });
+    fireEvent.click(within(screen.getByTestId('admin-category-form')).getByText('Thêm'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-category-image-thumb')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-category-save-btn'));
+    await waitFor(() => {
+      expect(calledWith('/api/admin/categories', 'POST')).toBe(true);
+    });
+    const postCall = fetchCalls().find(([url, init]) => String(url).includes('/api/admin/categories') && (init as { method?: string } | undefined)?.method === 'POST');
+    expect(postCall).toBeDefined();
+    const body = JSON.parse(String((postCall as [unknown, { body: string }])[1].body));
+    expect(body.slug).toBe('son-moi-rieng');
+    expect(body.iconUrl).toBe('https://example.com/cat.jpg');
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-toast')).toHaveTextContent('Đã thêm danh mục thành công.');
+    });
+  });
+
+  it('Form Khuyến mãi: mã tự viết hoa + tạo mã ngẫu nhiên + segmented % hiện Giảm tối đa + expiry kiểu date', async () => {
+    mockFetchAdmin();
+    renderAdmin();
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-nav-promotions')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-nav-promotions'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-promo-add-btn')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('admin-promo-add-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-promo-form-modal')).toBeInTheDocument();
+    });
+    const codeInput = screen.getByTestId('admin-promo-code-input');
+    fireEvent.change(codeInput, { target: { value: 'sale10' } });
+    expect(codeInput).toHaveValue('SALE10');
+    fireEvent.click(screen.getByTestId('admin-promo-generate-code-btn'));
+    expect((codeInput as HTMLInputElement).value).toMatch(/^[A-Z0-9]{8}$/);
+    // Mặc định loại % → ô Giảm tối đa hiện; chuyển Cố định → ẩn; quay lại % → hiện.
+    expect(screen.getByTestId('admin-promo-max-discount-input')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('admin-promo-discount-type-fixed'));
+    expect(screen.queryByTestId('admin-promo-max-discount-input')).toBeNull();
+    fireEvent.click(screen.getByTestId('admin-promo-discount-type-percent'));
+    expect(screen.getByTestId('admin-promo-max-discount-input')).toBeInTheDocument();
+    expect(screen.getByTestId('admin-promo-expiry-input')).toHaveAttribute('type', 'date');
+    expect(screen.getByTestId('admin-promo-status-toggle')).toBeInTheDocument();
+    // Lưu khi thiếu giá trị giảm → lỗi, không gọi POST.
+    fireEvent.click(screen.getByTestId('admin-promo-save-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-promo-value-error')).toBeInTheDocument();
+    });
+    expect(calledWith('/api/admin/promotions', 'POST')).toBe(false);
+  });
+
 });

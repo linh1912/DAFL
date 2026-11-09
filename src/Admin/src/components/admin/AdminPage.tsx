@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { apiJson, clearToken } from '../../../../Shared/utils/api';
 import type { NotificationItem } from '../../../../Shared/types';
+import { CategoryForm, ProductForm, PromoForm } from './AdminForms';
+import type { CategorySavePayload, ProductSavePayload, PromoSavePayload } from './AdminForms';
 import './AdminPage.css';
 
 /**
@@ -55,7 +57,7 @@ interface PublicProduct {
   description?: string; price: number; originalPrice?: number | null; availableStock?: number;
   imageUrl?: string; rating?: number; reviewCount?: number;
 }
-interface AdminCategory { id: string; name: string; slug?: string; description?: string | null; isActive: boolean; sortOrder?: number; productCount?: number; }
+interface AdminCategory { id: string; name: string; slug?: string; description?: string | null; isActive: boolean; sortOrder?: number; productCount?: number; iconUrl?: string; }
 interface Promotion {
   id: string; code: string; description?: string; discountType: string; discountValue: number;
   minOrderAmount?: number; maxDiscountAmount?: number | null; startDate?: string | null;
@@ -257,6 +259,21 @@ export default function AdminPage() {
   const [profile, setProfile] = useState<AdminProfile | null>(null);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [notice, setNotice] = useState<string | null>(null);
+  // Toast tối giản (đợt redesign form): hiện khi lưu form thành công, tự ẩn sau 3s.
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const showToast = (msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
+  };
+  // Hàng vừa lưu xong highlight 2 giây (class sa-row-highlight).
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!highlightId) return;
+    const t = window.setTimeout(() => setHighlightId(null), 2000);
+    return () => window.clearTimeout(t);
+  }, [highlightId]);
   const loadedRef = useRef<Set<Tab>>(new Set());
 
   // Giao diện Spark: sidebar thu gọn (desktop) / drawer (mobile), chuông, menu avatar.
@@ -305,16 +322,14 @@ export default function AdminPage() {
   const [selectedProduct, setSelectedProduct] = useState<PublicProduct | null>(null);
   const [productForm, setProductForm] = useState({ id: '', name: '', categoryId: '', price: '', originalPrice: '', stock: '', description: '', imageUrl: '', isActive: true });
   const [productFormOpen, setProductFormOpen] = useState(false);
-  const [productFormError, setProductFormError] = useState<string | null>(null);
   const [categories, setCategories] = useState<AdminCategory[]>([]);
   const [catsLoading, setCatsLoading] = useState(false);
   const [catsError, setCatsError] = useState<string | null>(null);
   const [catSearch, setCatSearch] = useState('');
   const [catStatusFilter, setCatStatusFilter] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<AdminCategory | null>(null);
-  const [catForm, setCatForm] = useState({ id: '', name: '', description: '', sortOrder: '0', isActive: true });
+  const [catForm, setCatForm] = useState({ id: '', name: '', description: '', sortOrder: '0', isActive: true, slug: '', iconUrl: '' });
   const [catFormOpen, setCatFormOpen] = useState(false);
-  const [catFormError, setCatFormError] = useState<string | null>(null);
 
   // Khuyến mãi
   const [promos, setPromos] = useState<Promotion[]>([]);
@@ -329,7 +344,6 @@ export default function AdminPage() {
     minTier: '', scopeType: 'All', scopeCategoryId: '', scopeProductIds: '',
   });
   const [promoFormOpen, setPromoFormOpen] = useState(false);
-  const [promoFormError, setPromoFormError] = useState<string | null>(null);
   const [promoUsage, setPromoUsage] = useState<PromotionUsage[] | null>(null);
   const [promoUsageFor, setPromoUsageFor] = useState('');
   const [disableReason, setDisableReason] = useState('');
@@ -369,7 +383,7 @@ export default function AdminPage() {
   const [refundTxCode, setRefundTxCode] = useState('');
   const [refundError, setRefundError] = useState<string | null>(null);
   // Hộp xác nhận dùng chung (đợt 13): mọi thao tác hủy/xóa đều phải xác nhận trước.
-  const [confirmDlg, setConfirmDlg] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
+  const [confirmDlg, setConfirmDlg] = useState<{ title: string; message: string; confirmLabel: string; cancelLabel?: string; onConfirm: () => void } | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
@@ -448,25 +462,27 @@ export default function AdminPage() {
     finally { setRevenueLoading(false); }
   }, []);
 
-  const loadCategories = useCallback(async () => {
+  const loadCategories = useCallback(async (): Promise<AdminCategory[] | null> => {
     setCatsLoading(true); setCatsError(null);
     try {
       const { body } = await apiJson<AdminCategory[]>('/api/admin/categories', { skipAuthHandler: true });
-      if (body?.success && Array.isArray(body.data)) setCategories(body.data);
-      else setCatsError(apiErr(body, 'Không tải được danh mục.'));
-    } catch { setCatsError('Không thể kết nối đến máy chủ.'); }
+      if (body?.success && Array.isArray(body.data)) { setCategories(body.data); return body.data; }
+      setCatsError(apiErr(body, 'Không tải được danh mục.'));
+      return null;
+    } catch { setCatsError('Không thể kết nối đến máy chủ.'); return null; }
     finally { setCatsLoading(false); }
   }, []);
 
-  const loadProducts = useCallback(async () => {
+  const loadProducts = useCallback(async (): Promise<PublicProduct[] | null> => {
     setProductsLoading(true); setProductsError(null);
     try {
       // Không có endpoint list SP riêng cho admin → dùng GET /api/products công khai
       // (chỉ trả SP đang bán, chưa xóa). Thêm/sửa/xóa dùng endpoint admin.
       const { body } = await apiJson<PublicProduct[]>('/api/products?page=1&pageSize=100', { skipAuthHandler: true });
-      if (body?.success && Array.isArray(body.data)) setProducts(body.data);
-      else setProductsError(apiErr(body, 'Không tải được sản phẩm.'));
-    } catch { setProductsError('Không thể kết nối đến máy chủ.'); }
+      if (body?.success && Array.isArray(body.data)) { setProducts(body.data); return body.data; }
+      setProductsError(apiErr(body, 'Không tải được sản phẩm.'));
+      return null;
+    } catch { setProductsError('Không thể kết nối đến máy chủ.'); return null; }
     finally { setProductsLoading(false); }
   }, []);
 
@@ -485,16 +501,17 @@ export default function AdminPage() {
     finally { setOrdersLoading(false); }
   }, [orderStatusFilter, orderSearch]);
 
-  const loadPromos = useCallback(async (overrides?: { status?: string }) => {
+  const loadPromos = useCallback(async (overrides?: { status?: string }): Promise<Promotion[] | null> => {
     setPromosLoading(true); setPromosError(null);
     try {
       const status = overrides?.status ?? promoStatusFilter;
       const params = new URLSearchParams({ page: '1', pageSize: '20' });
       if (status) params.set('status', status);
       const { body } = await apiJson<Promotion[]>(`/api/admin/promotions?${params.toString()}`, { skipAuthHandler: true });
-      if (body?.success && Array.isArray(body.data)) setPromos(body.data);
-      else setPromosError(apiErr(body, 'Không tải được khuyến mãi.'));
-    } catch { setPromosError('Không thể kết nối đến máy chủ.'); }
+      if (body?.success && Array.isArray(body.data)) { setPromos(body.data); return body.data; }
+      setPromosError(apiErr(body, 'Không tải được khuyến mãi.'));
+      return null;
+    } catch { setPromosError('Không thể kết nối đến máy chủ.'); return null; }
     finally { setPromosLoading(false); }
   }, [promoStatusFilter]);
 
@@ -748,26 +765,34 @@ export default function AdminPage() {
     finally { setOrderBusy(false); }
   };
 
-  const saveProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setProductFormError(null);
-    const name = productForm.name.trim();
-    const price = Number(productForm.price);
-    const originalPrice = productForm.originalPrice.trim() === '' ? null : Number(productForm.originalPrice);
-    const stock = Number(productForm.stock);
-    if (name.length < 3 || name.length > 120) { setProductFormError('Tên sản phẩm phải có từ 3 đến 120 ký tự.'); return; }
-    if (!(price > 0)) { setProductFormError('Giá bán phải lớn hơn 0.'); return; }
-    if (originalPrice !== null && !(originalPrice > price)) { setProductFormError('Giá gốc phải lớn hơn giá bán.'); return; }
-    if (!Number.isInteger(stock) || stock < 0) { setProductFormError('Tồn kho phải là số nguyên ≥ 0.'); return; }
-    if (!productForm.categoryId) { setProductFormError('Vui lòng chọn danh mục.'); return; }
-    const payload = { name, categoryId: productForm.categoryId, price, originalPrice, stock, description: productForm.description, imageUrl: productForm.imageUrl };
+  /**
+   * Lưu sản phẩm (đợt redesign form): form đã validate xong, chỉ gọi API.
+   * Trả { ok } để form biết có đóng hay hiện lỗi trong form; thành công thì
+   * đóng form + toast + reload + highlight hàng vừa lưu.
+   * Payload giữ nguyên field cũ + thêm imageUrls (ảnh chính đầu tiên) và
+   * isActive cả khi tạo (BE bỏ qua field lạ nếu request DTO chưa có).
+   */
+  const saveProduct = async (payload: ProductSavePayload): Promise<{ ok: boolean; error?: string }> => {
+    const body2 = {
+      name: payload.name, categoryId: payload.categoryId, price: payload.price,
+      originalPrice: payload.originalPrice, stock: payload.stock,
+      description: payload.description, imageUrl: payload.imageUrl,
+      imageUrls: payload.imageUrls, isActive: payload.isActive,
+    };
     try {
-      const { body } = productForm.id
-        ? await apiJson<unknown>(`/api/admin/products/${productForm.id}`, { method: 'PUT', skipAuthHandler: true, body: JSON.stringify({ ...payload, isActive: productForm.isActive }) })
-        : await apiJson<unknown>('/api/admin/products', { method: 'POST', skipAuthHandler: true, body: JSON.stringify(payload) });
-      if (body?.success) { setNotice(body.message || 'Đã lưu sản phẩm.'); setProductFormOpen(false); await loadProducts(); }
-      else setProductFormError(apiErr(body, 'Không lưu được sản phẩm.'));
-    } catch { setProductFormError('Không thể kết nối đến máy chủ.'); }
+      const { body } = payload.id
+        ? await apiJson<unknown>(`/api/admin/products/${payload.id}`, { method: 'PUT', skipAuthHandler: true, body: JSON.stringify(body2) })
+        : await apiJson<unknown>('/api/admin/products', { method: 'POST', skipAuthHandler: true, body: JSON.stringify(body2) });
+      if (body?.success) {
+        const rows = await loadProducts();
+        const createdId = (body.data as { id?: string } | null)?.id ?? rows?.find(r => r.name === payload.name)?.id;
+        if (createdId) setHighlightId(createdId);
+        setProductFormOpen(false);
+        showToast(body.message || (payload.id ? 'Đã cập nhật sản phẩm thành công.' : 'Đã thêm sản phẩm thành công.'));
+        return { ok: true };
+      }
+      return { ok: false, error: apiErr(body, 'Không lưu được sản phẩm.') };
+    } catch { return { ok: false, error: 'Không thể kết nối đến máy chủ.' }; }
   };
 
   const deleteProduct = async (p: PublicProduct) => {
@@ -778,19 +803,29 @@ export default function AdminPage() {
     } catch { setProductsError('Không thể kết nối đến máy chủ.'); }
   };
 
-  const saveCategory = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCatFormError(null);
-    const name = catForm.name.trim();
-    if (name.length < 2 || name.length > 150) { setCatFormError('Tên danh mục phải có từ 2 đến 150 ký tự.'); return; }
-    const sortOrder = Number(catForm.sortOrder) || 0;
+  /** Lưu danh mục: giữ field cũ + thêm slug, iconUrl (ảnh).
+   *  Backend cũ chưa có Slug/IconUrl trong UpdateCategoryRequest sẽ bỏ qua
+   *  field lạ; worker backend đang bổ sung song song. */
+  const saveCategory = async (payload: CategorySavePayload): Promise<{ ok: boolean; error?: string }> => {
+    const body2 = {
+      name: payload.name, description: payload.description || null,
+      isActive: payload.isActive, sortOrder: payload.sortOrder,
+      slug: payload.slug || null, iconUrl: payload.iconUrl || null,
+    };
     try {
-      const { body } = catForm.id
-        ? await apiJson<unknown>(`/api/admin/categories/${catForm.id}`, { method: 'PUT', skipAuthHandler: true, body: JSON.stringify({ name, description: catForm.description || null, isActive: catForm.isActive, sortOrder }) })
-        : await apiJson<unknown>('/api/admin/categories', { method: 'POST', skipAuthHandler: true, body: JSON.stringify({ name, description: catForm.description || null, sortOrder }) });
-      if (body?.success) { setNotice(body.message || 'Đã lưu danh mục.'); setCatFormOpen(false); await loadCategories(); }
-      else setCatFormError(apiErr(body, 'Không lưu được danh mục.'));
-    } catch { setCatFormError('Không thể kết nối đến máy chủ.'); }
+      const { body } = payload.id
+        ? await apiJson<unknown>(`/api/admin/categories/${payload.id}`, { method: 'PUT', skipAuthHandler: true, body: JSON.stringify(body2) })
+        : await apiJson<unknown>('/api/admin/categories', { method: 'POST', skipAuthHandler: true, body: JSON.stringify(body2) });
+      if (body?.success) {
+        const rows = await loadCategories();
+        const createdId = (body.data as { id?: string } | null)?.id ?? rows?.find(r => r.name === payload.name)?.id;
+        if (createdId) setHighlightId(createdId);
+        setCatFormOpen(false);
+        showToast(body.message || (payload.id ? 'Đã cập nhật danh mục thành công.' : 'Đã thêm danh mục thành công.'));
+        return { ok: true };
+      }
+      return { ok: false, error: apiErr(body, 'Không lưu được danh mục.') };
+    } catch { return { ok: false, error: 'Không thể kết nối đến máy chủ.' }; }
   };
 
   const deleteCategory = async (c: AdminCategory) => {
@@ -801,56 +836,101 @@ export default function AdminPage() {
     } catch { setCatsError('Không thể kết nối đến máy chủ.'); }
   };
 
-  const savePromo = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPromoFormError(null);
-    // Sửa voucher Draft (đợt 13): chỉ sửa mô tả/giá trị/hạn/lượt/đơn tối thiểu/trần giảm —
-    // mã, loại giảm, phạm vi và hạng không đổi (BE cũng từ chối sửa các trường đó ở Draft).
-    if (promoForm.id) {
-      const discountValue = Number(promoForm.discountValue);
-      if (!(discountValue > 0) || (promoForm.discountType === 'Percentage' && discountValue > 100)) { setPromoFormError('Giá trị giảm không hợp lệ (giảm % tối đa 100).'); return; }
-      const minOrderAmount = Number(promoForm.minOrderAmount) || 0;
-      if (minOrderAmount < 0) { setPromoFormError('Đơn tối thiểu không được âm.'); return; }
+  /** Lưu khuyến mãi: form đã validate xong, chỉ gọi API (luật giữ nguyên).
+   *  Sửa voucher Draft: chỉ sửa mô tả/giá trị/hạn/lượt/đơn tối thiểu/trần giảm —
+   *  mã, loại giảm, phạm vi và hạng không đổi (BE cũng từ chối sửa các trường đó ở Draft).
+   *  Tạo mới: toggle "Kích hoạt ngay sau khi tạo" (admin-promo-status-toggle)
+   *  thì sau khi tạo thành công sẽ gọi thêm POST .../activate cho voucher vừa tạo. */
+  const savePromo = async (payload: PromoSavePayload): Promise<{ ok: boolean; error?: string }> => {
+    if (payload.id) {
+      const discountValue = Number(payload.discountValue);
+      const minOrderAmount = Number(payload.minOrderAmount) || 0;
       try {
-        const { body } = await apiJson<unknown>(`/api/admin/promotions/${promoForm.id}`, {
+        const { body } = await apiJson<unknown>(`/api/admin/promotions/${payload.id}`, {
           method: 'PUT', skipAuthHandler: true,
           body: JSON.stringify({
-            description: promoForm.description,
+            description: payload.description,
             discountValue,
             minOrderAmount,
-            maxDiscountAmount: promoForm.maxDiscountAmount.trim() === '' ? null : Number(promoForm.maxDiscountAmount),
-            expiryDate: promoForm.expiryDate ? new Date(promoForm.expiryDate).toISOString() : null,
-            maxUses: promoForm.maxUses.trim() === '' ? null : Number(promoForm.maxUses),
+            maxDiscountAmount: payload.maxDiscountAmount.trim() === '' ? null : Number(payload.maxDiscountAmount),
+            expiryDate: payload.expiryDate ? new Date(payload.expiryDate).toISOString() : null,
+            maxUses: payload.maxUses.trim() === '' ? null : Number(payload.maxUses),
           }),
         });
-        if (body?.success) { setNotice(body.message || 'Đã cập nhật khuyến mãi.'); setPromoFormOpen(false); await loadPromos(); }
-        else setPromoFormError(apiErr(body, 'Không sửa được khuyến mãi.'));
-      } catch { setPromoFormError('Không thể kết nối đến máy chủ.'); }
-      return;
+        if (body?.success) {
+          await loadPromos();
+          setHighlightId(payload.id);
+          setPromoFormOpen(false);
+          showToast(body.message || 'Đã cập nhật khuyến mãi.');
+          return { ok: true };
+        }
+        return { ok: false, error: apiErr(body, 'Không sửa được khuyến mãi.') };
+      } catch { return { ok: false, error: 'Không thể kết nối đến máy chủ.' }; }
     }
-    const code = promoForm.code.trim().toUpperCase();
-    const discountValue = Number(promoForm.discountValue);
-    if (!/^[A-Za-z0-9_-]{3,50}$/.test(code)) { setPromoFormError('Mã chỉ gồm chữ, số, gạch ngang/gạch dưới, từ 3 đến 50 ký tự.'); return; }
-    if (!(discountValue > 0) || (promoForm.discountType === 'Percentage' && discountValue > 100)) { setPromoFormError('Giá trị giảm không hợp lệ (giảm % tối đa 100).'); return; }
-    if (promoForm.scopeType === 'Category' && !promoForm.scopeCategoryId) { setPromoFormError('Voucher theo danh mục phải chọn danh mục.'); return; }
-    if (promoForm.scopeType === 'Product' && !promoForm.scopeProductIds.trim()) { setPromoFormError('Voucher theo sản phẩm phải chọn ít nhất 1 sản phẩm (nhập ID, cách nhau bằng dấu phẩy).'); return; }
-    const payload = {
-      code, description: promoForm.description, discountType: promoForm.discountType, discountValue,
-      minOrderAmount: Number(promoForm.minOrderAmount) || 0,
-      maxDiscountAmount: promoForm.maxDiscountAmount.trim() === '' ? null : Number(promoForm.maxDiscountAmount),
-      startDate: promoForm.startDate ? new Date(promoForm.startDate).toISOString() : null,
-      expiryDate: promoForm.expiryDate ? new Date(promoForm.expiryDate).toISOString() : null,
-      maxUses: promoForm.maxUses.trim() === '' ? null : Number(promoForm.maxUses),
-      maxUsesPerUser: promoForm.maxUsesPerUser.trim() === '' ? null : Number(promoForm.maxUsesPerUser),
-      minTier: promoForm.minTier || null, scopeType: promoForm.scopeType,
-      scopeCategoryId: promoForm.scopeType === 'Category' ? promoForm.scopeCategoryId : null,
-      scopeProductIds: promoForm.scopeType === 'Product' ? promoForm.scopeProductIds.trim() : null,
+    const code = payload.code.trim().toUpperCase();
+    const discountValue = Number(payload.discountValue);
+    const createPayload = {
+      code, description: payload.description, discountType: payload.discountType, discountValue,
+      minOrderAmount: Number(payload.minOrderAmount) || 0,
+      maxDiscountAmount: payload.maxDiscountAmount.trim() === '' ? null : Number(payload.maxDiscountAmount),
+      startDate: payload.startDate ? new Date(payload.startDate).toISOString() : null,
+      expiryDate: payload.expiryDate ? new Date(payload.expiryDate).toISOString() : null,
+      maxUses: payload.maxUses.trim() === '' ? null : Number(payload.maxUses),
+      maxUsesPerUser: payload.maxUsesPerUser.trim() === '' ? null : Number(payload.maxUsesPerUser),
+      minTier: payload.minTier || null, scopeType: payload.scopeType,
+      scopeCategoryId: payload.scopeType === 'Category' ? payload.scopeCategoryId : null,
+      scopeProductIds: payload.scopeType === 'Product' ? payload.scopeProductIds.trim() : null,
     };
     try {
-      const { body } = await apiJson<unknown>('/api/admin/promotions', { method: 'POST', skipAuthHandler: true, body: JSON.stringify(payload) });
-      if (body?.success) { setNotice(body.message || 'Đã tạo khuyến mãi.'); setPromoFormOpen(false); await loadPromos(); }
-      else setPromoFormError(apiErr(body, 'Không tạo được khuyến mãi.'));
-    } catch { setPromoFormError('Không thể kết nối đến máy chủ.'); }
+      const { body } = await apiJson<unknown>('/api/admin/promotions', { method: 'POST', skipAuthHandler: true, body: JSON.stringify(createPayload) });
+      if (body?.success) {
+        let createdId = (body.data as { id?: string } | null)?.id;
+        const rows = await loadPromos();
+        if (!createdId) createdId = rows?.find(p => p.code === code)?.id;
+        if (payload.activateNow && createdId) {
+          await apiJson<string>(`/api/admin/promotions/${createdId}/activate`, { method: 'POST', skipAuthHandler: true, body: JSON.stringify({}) });
+          await loadPromos();
+        }
+        if (createdId) setHighlightId(createdId);
+        setPromoFormOpen(false);
+        showToast(body.message || 'Đã tạo khuyến mãi thành công.');
+        return { ok: true };
+      }
+      return { ok: false, error: apiErr(body, 'Không tạo được khuyến mãi.') };
+    } catch { return { ok: false, error: 'Không thể kết nối đến máy chủ.' }; }
+  };
+
+  /** Đóng form: nếu đã sửa (dirty) thì hỏi "chưa lưu" qua ConfirmDialog có sẵn
+   *  (nút Ở lại / Thoát); chưa sửa thì đóng luôn. */
+  const requestCloseProduct = (dirty: boolean) => {
+    if (!dirty) { setProductFormOpen(false); return; }
+    setConfirmDlg({
+      title: 'Thoát mà không lưu?',
+      message: 'Bạn có thay đổi chưa lưu. Thoát không?',
+      confirmLabel: 'Thoát',
+      cancelLabel: 'Ở lại',
+      onConfirm: () => setProductFormOpen(false),
+    });
+  };
+  const requestCloseCategory = (dirty: boolean) => {
+    if (!dirty) { setCatFormOpen(false); return; }
+    setConfirmDlg({
+      title: 'Thoát mà không lưu?',
+      message: 'Bạn có thay đổi chưa lưu. Thoát không?',
+      confirmLabel: 'Thoát',
+      cancelLabel: 'Ở lại',
+      onConfirm: () => setCatFormOpen(false),
+    });
+  };
+  const requestClosePromo = (dirty: boolean) => {
+    if (!dirty) { setPromoFormOpen(false); return; }
+    setConfirmDlg({
+      title: 'Thoát mà không lưu?',
+      message: 'Bạn có thay đổi chưa lưu. Thoát không?',
+      confirmLabel: 'Thoát',
+      cancelLabel: 'Ở lại',
+      onConfirm: () => setPromoFormOpen(false),
+    });
   };
 
   /** Mở form sửa voucher Draft: nạp giá trị hiện có vào form (mã/loại/phạm vi chỉ xem, không sửa). */
@@ -864,7 +944,7 @@ export default function AdminPage() {
       maxUses: p.maxUses != null ? String(p.maxUses) : '', maxUsesPerUser: p.maxUsesPerUser != null ? String(p.maxUsesPerUser) : '1',
       minTier: p.minTier ?? '', scopeType: p.scopeType ?? 'All', scopeCategoryId: '', scopeProductIds: '',
     });
-    setPromoFormError(null); setPromoFormOpen(true);
+    setPromoFormOpen(true);
   };
 
   /** Xóa voucher Draft (đợt 13): gọi sau khi xác nhận ở hộp xác nhận dùng chung. */
@@ -1210,6 +1290,13 @@ export default function AdminPage() {
             </div>
           )}
 
+          {toast && (
+            <div className="sa-toast" data-testid="admin-toast" role="status">
+              <span aria-hidden="true">✓</span> {toast}
+              <button type="button" onClick={() => setToast(null)} aria-label="Đóng thông báo">✕</button>
+            </div>
+          )}
+
           <main>
             {tab === 'dashboard' && (
               <section>
@@ -1491,7 +1578,7 @@ export default function AdminPage() {
                 <p className="sa-muted-text">Danh sách lấy từ GET /api/products công khai (chỉ sản phẩm đang bán). Sản phẩm đã ẩn/xóa mềm không hiện ở đây vì backend chưa có endpoint list SP riêng cho admin.</p>
                 <div className="sa-toolbar">
                   <div className="sa-toolbar-left">
-                    <button type="button" onClick={() => { setProductForm({ id: '', name: '', categoryId: categories[0]?.id ?? '', price: '', originalPrice: '', stock: '', description: '', imageUrl: '', isActive: true }); setProductFormError(null); setProductFormOpen(true); }} className="sa-btn sa-btn-add" data-testid="admin-product-add-btn">+ Thêm sản phẩm</button>
+                    <button type="button" onClick={() => { setProductForm({ id: '', name: '', categoryId: categories[0]?.id ?? '', price: '', originalPrice: '', stock: '', description: '', imageUrl: '', isActive: true }); setProductFormOpen(true); }} className="sa-btn sa-btn-add" data-testid="admin-product-add-btn">+ Thêm sản phẩm</button>
                   </div>
                   <div className="sa-toolbar-right">
                     <input className="sa-input" placeholder="Tìm tên sản phẩm" value={productSearch} onChange={e => setProductSearch(e.target.value)} data-testid="admin-product-search" />
@@ -1508,49 +1595,12 @@ export default function AdminPage() {
                 {productsLoading && <p>Đang tải sản phẩm...</p>}
                 {productsError && <p className="sa-error">{productsError}</p>}
                 {productFormOpen && (
-                  <SparkModal
-                    title={productForm.id ? 'Sửa sản phẩm' : 'Thêm sản phẩm'}
-                    onClose={() => setProductFormOpen(false)}
-                    hideFooter
-                    testid="admin-product-form-modal"
-                  >
-                    <form onSubmit={saveProduct} data-testid="admin-product-form">
-                      {productFormError && <p className="sa-error">{productFormError}</p>}
-                    <div className="sa-form-grid">
-                      <label className="sa-field"><span>Tên sản phẩm (3–120 ký tự)</span>
-                        <input className="sa-input" value={productForm.name} onChange={e => setProductForm({ ...productForm, name: e.target.value })} data-testid="admin-product-name-input" />
-                      </label>
-                      <label className="sa-field"><span>Danh mục</span>
-                        <select className="sa-input" value={productForm.categoryId} onChange={e => setProductForm({ ...productForm, categoryId: e.target.value })} data-testid="admin-product-category-select" aria-label="Danh mục">
-                          <option value="">— Chọn danh mục —</option>
-                          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
-                      </label>
-                      <label className="sa-field"><span>Giá bán (&gt; 0)</span>
-                        <input className="sa-input" type="number" min={1} value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} data-testid="admin-product-price-input" />
-                      </label>
-                      <label className="sa-field"><span>Giá gốc (lớn hơn giá bán, không bắt buộc)</span>
-                        <input className="sa-input" type="number" min={0} value={productForm.originalPrice} onChange={e => setProductForm({ ...productForm, originalPrice: e.target.value })} />
-                      </label>
-                      <label className="sa-field"><span>Tồn kho (≥ 0)</span>
-                        <input className="sa-input" type="number" min={0} value={productForm.stock} onChange={e => setProductForm({ ...productForm, stock: e.target.value })} data-testid="admin-product-stock-input" />
-                      </label>
-                      <label className="sa-field"><span>Ảnh URL</span>
-                        <input className="sa-input" value={productForm.imageUrl} onChange={e => setProductForm({ ...productForm, imageUrl: e.target.value })} />
-                      </label>
-                      <label className="sa-field sa-field-wide"><span>Mô tả</span>
-                        <textarea className="sa-input" value={productForm.description} onChange={e => setProductForm({ ...productForm, description: e.target.value })} />
-                      </label>
-                      {productForm.id && (
-                        <label className="sa-check sa-field-wide"><input type="checkbox" checked={productForm.isActive} onChange={e => setProductForm({ ...productForm, isActive: e.target.checked })} /> Đang hiển thị</label>
-                      )}
-                    </div>
-                    <div className="sa-form-actions">
-                      <button type="submit" className="sa-btn" data-testid="admin-product-save-btn">Lưu</button>
-                      <button type="button" onClick={() => setProductFormOpen(false)} className="sa-btn sa-btn-ghost">Đóng</button>
-                    </div>
-                    </form>
-                  </SparkModal>
+                  <ProductForm
+                    initial={productForm}
+                    categories={categories}
+                    onSave={saveProduct}
+                    onRequestClose={requestCloseProduct}
+                  />
                 )}
                 {!productsLoading && filteredProducts.length === 0 && !productsError && <p>Không có sản phẩm nào.</p>}
                 {filteredProducts.length > 0 && (
@@ -1559,7 +1609,7 @@ export default function AdminPage() {
                       <thead><tr><th>Sản phẩm</th><th>Danh mục</th><th>Giá</th><th>Tồn kho</th><th>Đánh giá</th><th>Thao tác</th></tr></thead>
                       <tbody>
                         {productsPaging.paged.map(p => (
-                          <tr key={p.id}>
+                          <tr key={p.id} className={highlightId === p.id ? 'sa-row-highlight' : undefined}>
                             <td>
                               <span className="sa-user-cell">
                                 {p.imageUrl
@@ -1581,7 +1631,7 @@ export default function AdminPage() {
                                 aria-label={`Sửa sản phẩm ${p.name}`}
                                 onClick={() => {
                                   setProductForm({ id: p.id, name: p.name, categoryId: p.categoryId, price: String(p.price), originalPrice: p.originalPrice ? String(p.originalPrice) : '', stock: String(p.availableStock ?? 0), description: p.description ?? '', imageUrl: p.imageUrl ?? '', isActive: true });
-                                  setProductFormError(null); setProductFormOpen(true);
+                                  setProductFormOpen(true);
                                 }}
                               >
                                 ✎
@@ -1617,7 +1667,7 @@ export default function AdminPage() {
               <section>
                 <div className="sa-toolbar">
                   <div className="sa-toolbar-left">
-                    <button type="button" onClick={() => { setCatForm({ id: '', name: '', description: '', sortOrder: '0', isActive: true }); setCatFormError(null); setCatFormOpen(true); }} className="sa-btn sa-btn-add" data-testid="admin-category-add-btn">+ Thêm danh mục</button>
+                    <button type="button" onClick={() => { setCatForm({ id: '', name: '', description: '', sortOrder: '0', isActive: true, slug: '', iconUrl: '' }); setCatFormOpen(true); }} className="sa-btn sa-btn-add" data-testid="admin-category-add-btn">+ Thêm danh mục</button>
                   </div>
                   <div className="sa-toolbar-right">
                     <input className="sa-input" placeholder="Tìm tên / slug danh mục" value={catSearch} onChange={e => setCatSearch(e.target.value)} aria-label="Tìm danh mục" />
@@ -1635,32 +1685,11 @@ export default function AdminPage() {
                 {catsLoading && <p>Đang tải danh mục...</p>}
                 {catsError && <p className="sa-error">{catsError}</p>}
                 {catFormOpen && (
-                  <SparkModal
-                    title={catForm.id ? 'Sửa danh mục' : 'Thêm danh mục'}
-                    onClose={() => setCatFormOpen(false)}
-                    hideFooter
-                    testid="admin-category-form-modal"
-                  >
-                    <form onSubmit={saveCategory} data-testid="admin-category-form">
-                      {catFormError && <p className="sa-error">{catFormError}</p>}
-                    <div className="sa-form-grid">
-                      <label className="sa-field"><span>Tên danh mục (2–150 ký tự)</span>
-                        <input className="sa-input" value={catForm.name} onChange={e => setCatForm({ ...catForm, name: e.target.value })} data-testid="admin-category-name-input" />
-                      </label>
-                      <label className="sa-field sa-field-wide"><span>Mô tả</span>
-                        <input className="sa-input" value={catForm.description} onChange={e => setCatForm({ ...catForm, description: e.target.value })} />
-                      </label>
-                      <label className="sa-field"><span>Thứ tự sắp xếp</span>
-                        <input className="sa-input" type="number" value={catForm.sortOrder} onChange={e => setCatForm({ ...catForm, sortOrder: e.target.value })} />
-                      </label>
-                      {catForm.id && <label className="sa-check sa-field-wide"><input type="checkbox" checked={catForm.isActive} onChange={e => setCatForm({ ...catForm, isActive: e.target.checked })} /> Đang hiển thị</label>}
-                    </div>
-                    <div className="sa-form-actions">
-                      <button type="submit" className="sa-btn">Lưu</button>
-                      <button type="button" onClick={() => setCatFormOpen(false)} className="sa-btn sa-btn-ghost">Đóng</button>
-                    </div>
-                    </form>
-                  </SparkModal>
+                  <CategoryForm
+                    initial={catForm}
+                    onSave={saveCategory}
+                    onRequestClose={requestCloseCategory}
+                  />
                 )}
                 {!catsLoading && filteredCategories.length === 0 && !catsError && <p>Chưa có danh mục.</p>}
                 {filteredCategories.length > 0 && (
@@ -1669,7 +1698,7 @@ export default function AdminPage() {
                       <thead><tr><th>Tên</th><th>Slug</th><th>Mô tả</th><th>Số SP</th><th>Thứ tự</th><th>Hiển thị</th><th>Thao tác</th></tr></thead>
                       <tbody>
                         {categoriesPaging.paged.map(c => (
-                          <tr key={c.id}>
+                          <tr key={c.id} className={highlightId === c.id ? 'sa-row-highlight' : undefined}>
                             <td><strong>{c.name}</strong></td>
                             <td>{c.slug ?? '—'}</td>
                             <td>{c.description ?? '—'}</td>
@@ -1678,7 +1707,7 @@ export default function AdminPage() {
                             <td>{c.isActive ? <span className="sa-pill sa-pill-green"><span className="sa-dot" aria-hidden="true" />Có</span> : <span className="sa-pill sa-pill-gray"><span className="sa-dot" aria-hidden="true" />Không</span>}</td>
                             <td className="sa-actions">
                               <button type="button" className="sa-icon-btn" title="Xem chi tiết danh mục" aria-label={`Xem chi tiết danh mục ${c.name}`} onClick={() => setSelectedCategory(c)}>👁</button>
-                              <button type="button" className="sa-icon-btn" title="Sửa danh mục" aria-label={`Sửa danh mục ${c.name}`} onClick={() => { setCatForm({ id: c.id, name: c.name, description: c.description ?? '', sortOrder: String(c.sortOrder ?? 0), isActive: c.isActive }); setCatFormError(null); setCatFormOpen(true); }}>✎</button>
+                              <button type="button" className="sa-icon-btn" title="Sửa danh mục" aria-label={`Sửa danh mục ${c.name}`} onClick={() => { setCatForm({ id: c.id, name: c.name, description: c.description ?? '', sortOrder: String(c.sortOrder ?? 0), isActive: c.isActive, slug: c.slug ?? '', iconUrl: c.iconUrl ?? '' }); setCatFormOpen(true); }}>✎</button>
                               <button type="button" className="sa-icon-btn sa-icon-danger" title="Xóa danh mục" aria-label={`Xóa danh mục ${c.name}`} onClick={() => setConfirmDlg({
                                 title: 'Xác nhận xóa danh mục',
                                 message: `Xóa danh mục “${c.name}”? Danh mục đã xóa không khôi phục được.`,
@@ -1702,7 +1731,7 @@ export default function AdminPage() {
               <section>
                 <div className="sa-toolbar">
                   <div className="sa-toolbar-left">
-                    <button type="button" onClick={() => { setPromoForm({ id: '', code: '', description: '', discountType: 'Percentage', discountValue: '', minOrderAmount: '0', maxDiscountAmount: '', startDate: '', expiryDate: '', maxUses: '', maxUsesPerUser: '1', minTier: '', scopeType: 'All', scopeCategoryId: '', scopeProductIds: '' }); setPromoFormError(null); setPromoFormOpen(true); }} className="sa-btn sa-btn-add" data-testid="admin-promo-add-btn">+ Tạo khuyến mãi</button>
+                    <button type="button" onClick={() => { setPromoForm({ id: '', code: '', description: '', discountType: 'Percentage', discountValue: '', minOrderAmount: '0', maxDiscountAmount: '', startDate: '', expiryDate: '', maxUses: '', maxUsesPerUser: '1', minTier: '', scopeType: 'All', scopeCategoryId: '', scopeProductIds: '' }); setPromoFormOpen(true); }} className="sa-btn sa-btn-add" data-testid="admin-promo-add-btn">+ Tạo khuyến mãi</button>
                   </div>
                   <div className="sa-toolbar-right">
                     <input className="sa-input" placeholder="Tìm mã / mô tả khuyến mãi" value={promoSearch} onChange={e => setPromoSearch(e.target.value)} aria-label="Tìm khuyến mãi" />
@@ -1722,88 +1751,12 @@ export default function AdminPage() {
                 {promosLoading && <p>Đang tải khuyến mãi...</p>}
                 {promosError && <p className="sa-error">{promosError}</p>}
                 {promoFormOpen && (
-                  <SparkModal
-                    title={promoForm.id ? `Sửa khuyến mãi ${promoForm.code}` : 'Tạo khuyến mãi mới'}
-                    onClose={() => setPromoFormOpen(false)}
-                    hideFooter
-                    testid="admin-promo-form-modal"
-                  >
-                    <form onSubmit={savePromo} data-testid="admin-promo-form">
-                      {promoForm.id
-                        ? <p className="sa-muted-text">Voucher Nháp: chỉ sửa được mô tả, giá trị giảm, đơn tối thiểu, trần giảm, ngày kết thúc và tổng lượt. Mã, loại giảm và phạm vi không đổi.</p>
-                        : <p className="sa-muted-text">Tạo ở trạng thái Nháp — bấm Kích hoạt để chạy.</p>}
-                      {promoFormError && <p className="sa-error">{promoFormError}</p>}
-                    <div className="sa-form-grid">
-                      <label className="sa-field"><span>Mã (3–50 ký tự: chữ, số, -, _)</span>
-                        <input className="sa-input" value={promoForm.code} onChange={e => setPromoForm({ ...promoForm, code: e.target.value })} data-testid="admin-promo-code-input" disabled={!!promoForm.id} />
-                      </label>
-                      <label className="sa-field"><span>Mô tả</span>
-                        <input className="sa-input" value={promoForm.description} onChange={e => setPromoForm({ ...promoForm, description: e.target.value })} />
-                      </label>
-                      <label className="sa-field"><span>Loại giảm</span>
-                        <select className="sa-input" value={promoForm.discountType} onChange={e => setPromoForm({ ...promoForm, discountType: e.target.value })} aria-label="Loại giảm" disabled={!!promoForm.id}>
-                          <option value="Percentage">Giảm theo %</option>
-                          <option value="Fixed">Giảm tiền cố định</option>
-                          <option value="FreeShip">Miễn phí vận chuyển</option>
-                        </select>
-                      </label>
-                      <label className="sa-field"><span>Giá trị giảm</span>
-                        <input className="sa-input" type="number" min={0} value={promoForm.discountValue} onChange={e => setPromoForm({ ...promoForm, discountValue: e.target.value })} />
-                      </label>
-                      <label className="sa-field"><span>Đơn tối thiểu</span>
-                        <input className="sa-input" type="number" min={0} value={promoForm.minOrderAmount} onChange={e => setPromoForm({ ...promoForm, minOrderAmount: e.target.value })} />
-                      </label>
-                      <label className="sa-field"><span>Trần giảm (không bắt buộc)</span>
-                        <input className="sa-input" type="number" min={0} value={promoForm.maxDiscountAmount} onChange={e => setPromoForm({ ...promoForm, maxDiscountAmount: e.target.value })} />
-                      </label>
-                      <label className="sa-field"><span>Ngày bắt đầu</span>
-                        <input className="sa-input" type="datetime-local" value={promoForm.startDate} onChange={e => setPromoForm({ ...promoForm, startDate: e.target.value })} disabled={!!promoForm.id} />
-                      </label>
-                      <label className="sa-field"><span>Ngày kết thúc</span>
-                        <input className="sa-input" type="datetime-local" value={promoForm.expiryDate} onChange={e => setPromoForm({ ...promoForm, expiryDate: e.target.value })} />
-                      </label>
-                      <label className="sa-field"><span>Tổng lượt dùng (không bắt buộc)</span>
-                        <input className="sa-input" type="number" min={1} value={promoForm.maxUses} onChange={e => setPromoForm({ ...promoForm, maxUses: e.target.value })} />
-                      </label>
-                      <label className="sa-field"><span>Lượt dùng / người</span>
-                        <input className="sa-input" type="number" min={1} value={promoForm.maxUsesPerUser} onChange={e => setPromoForm({ ...promoForm, maxUsesPerUser: e.target.value })} disabled={!!promoForm.id} />
-                      </label>
-                      <label className="sa-field"><span>Hạng tối thiểu</span>
-                        <select className="sa-input" value={promoForm.minTier} onChange={e => setPromoForm({ ...promoForm, minTier: e.target.value })} aria-label="Hạng tối thiểu" disabled={!!promoForm.id}>
-                          <option value="">Không giới hạn hạng</option>
-                          <option value="Member">Thường</option>
-                          <option value="Silver">Bạc</option>
-                          <option value="Gold">Vàng</option>
-                          <option value="Diamond">Kim cương</option>
-                        </select>
-                      </label>
-                      <label className="sa-field"><span>Phạm vi áp dụng</span>
-                        <select className="sa-input" value={promoForm.scopeType} onChange={e => setPromoForm({ ...promoForm, scopeType: e.target.value })} aria-label="Phạm vi áp dụng" disabled={!!promoForm.id}>
-                          <option value="All">Toàn sàn</option>
-                          <option value="Category">Theo danh mục</option>
-                          <option value="Product">Theo sản phẩm</option>
-                        </select>
-                      </label>
-                      {promoForm.scopeType === 'Category' && (
-                        <label className="sa-field sa-field-wide"><span>Danh mục áp dụng</span>
-                          <select className="sa-input" value={promoForm.scopeCategoryId} onChange={e => setPromoForm({ ...promoForm, scopeCategoryId: e.target.value })} aria-label="Danh mục áp dụng">
-                            <option value="">— Chọn danh mục —</option>
-                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
-                        </label>
-                      )}
-                      {promoForm.scopeType === 'Product' && (
-                        <label className="sa-field sa-field-wide"><span>ID sản phẩm, cách nhau bằng dấu phẩy</span>
-                          <input className="sa-input" value={promoForm.scopeProductIds} onChange={e => setPromoForm({ ...promoForm, scopeProductIds: e.target.value })} />
-                        </label>
-                      )}
-                    </div>
-                    <div className="sa-form-actions">
-                      <button type="submit" className="sa-btn">{promoForm.id ? 'Lưu thay đổi' : 'Tạo khuyến mãi'}</button>
-                      <button type="button" onClick={() => setPromoFormOpen(false)} className="sa-btn sa-btn-ghost">Đóng</button>
-                    </div>
-                    </form>
-                  </SparkModal>
+                  <PromoForm
+                    initial={promoForm}
+                    categories={categories}
+                    onSave={savePromo}
+                    onRequestClose={requestClosePromo}
+                  />
                 )}
                 {disableTarget && (
                   <SparkModal
@@ -1823,7 +1776,7 @@ export default function AdminPage() {
                       <thead><tr><th>Mã</th><th>Mô tả</th><th>Loại giảm</th><th>Giá trị</th><th>Đơn tối thiểu</th><th>Đã dùng</th><th>Hạn</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
                       <tbody>
                         {promosPaging.paged.map(p => (
-                          <tr key={p.id}>
+                          <tr key={p.id} className={highlightId === p.id ? 'sa-row-highlight' : undefined}>
                             <td><span className="sa-code">{p.code}</span></td>
                             <td>{p.description ?? '—'}</td>
                             <td>{p.discountType}{p.minTier ? <><br /><small>Hạng {TIER_LABELS[p.minTier] ?? p.minTier}+</small></> : null}</td>
@@ -2170,7 +2123,7 @@ export default function AdminPage() {
                     onClick={() => {
                       const p = selectedProduct;
                       setProductForm({ id: p.id, name: p.name, categoryId: p.categoryId, price: String(p.price), originalPrice: p.originalPrice ? String(p.originalPrice) : '', stock: String(p.availableStock ?? 0), description: p.description ?? '', imageUrl: p.imageUrl ?? '', isActive: true });
-                      setProductFormError(null); setProductFormOpen(true); setSelectedProduct(null);
+                      setProductFormOpen(true); setSelectedProduct(null);
                     }}
                   >
                     Sửa sản phẩm
@@ -2198,8 +2151,8 @@ export default function AdminPage() {
                     className="sa-btn"
                     onClick={() => {
                       const c = selectedCategory;
-                      setCatForm({ id: c.id, name: c.name, description: c.description ?? '', sortOrder: String(c.sortOrder ?? 0), isActive: c.isActive });
-                      setCatFormError(null); setCatFormOpen(true); setSelectedCategory(null);
+                      setCatForm({ id: c.id, name: c.name, description: c.description ?? '', sortOrder: String(c.sortOrder ?? 0), isActive: c.isActive, slug: c.slug ?? '', iconUrl: c.iconUrl ?? '' });
+                      setCatFormOpen(true); setSelectedCategory(null);
                     }}
                   >
                     Sửa danh mục
@@ -2286,7 +2239,7 @@ export default function AdminPage() {
                 onClose={() => setConfirmDlg(null)}
                 footer={(
                   <>
-                    <button type="button" className="sa-btn sa-btn-ghost" onClick={() => setConfirmDlg(null)} data-testid="admin-confirm-no-btn">Hủy</button>
+                    <button type="button" className="sa-btn sa-btn-ghost" onClick={() => setConfirmDlg(null)} data-testid="admin-confirm-no-btn">{confirmDlg.cancelLabel ?? 'Hủy'}</button>
                     <button
                       type="button"
                       className="sa-btn sa-btn-danger"

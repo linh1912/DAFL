@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using DAFL.Backend.Common;
+using DAFL.Backend.Features.Products;
 using DAFL.Backend.Infrastructure.Data;
 using FluentValidation;
 using MediatR;
@@ -102,11 +104,12 @@ public class GetRevenueReportQueryHandler : IRequestHandler<GetRevenueReportQuer
 // ---------- Sản phẩm (§3.1) ----------
 
 public record AdminProductDto(Guid Id, string Name, string Slug, Guid CategoryId, string CategoryName,
-    decimal Price, decimal? OriginalPrice, int Stock, int ReservedStock, bool IsActive, string ImageUrl, DateTime CreatedAt);
+    decimal Price, decimal? OriginalPrice, int Stock, int ReservedStock, bool IsActive, string ImageUrl, DateTime CreatedAt,
+    List<string> ImageUrls);
 
 public record CreateProductCommand(
     string Name, Guid CategoryId, decimal Price, decimal? OriginalPrice, int Stock,
-    string Description, string ImageUrl, string? Slug = null) : IRequest<ApiResponse<AdminProductDto>>;
+    string Description, string ImageUrl, string? Slug = null, List<string>? ImageUrls = null) : IRequest<ApiResponse<AdminProductDto>>;
 
 public class CreateProductCommandValidator : AbstractValidator<CreateProductCommand>
 {
@@ -121,6 +124,8 @@ public class CreateProductCommandValidator : AbstractValidator<CreateProductComm
         RuleFor(x => x.CategoryId).NotEmpty().WithMessage("Sản phẩm phải thuộc 1 danh mục.");
         RuleFor(x => x.Description).MaximumLength(5000).WithMessage("Mô tả tối đa 5000 ký tự.");
         RuleFor(x => x.ImageUrl).MaximumLength(1000).WithMessage("Đường dẫn ảnh quá dài.");
+        RuleForEach(x => x.ImageUrls).MaximumLength(1000).WithMessage("Đường dẫn ảnh quá dài.")
+            .When(x => x.ImageUrls != null);
     }
 }
 
@@ -139,13 +144,21 @@ public class CreateProductCommandHandler : IRequestHandler<CreateProductCommand,
         if (await _db.Products.AnyAsync(p => p.Slug == slug, ct))
             return ApiResponse<AdminProductDto>.Fail("Slug sản phẩm đã tồn tại.");
 
+        // Thư viện ảnh (đợt redesign form admin): ImageUrls → ImagesJson (JSON).
+        // Tương thích cũ: client chỉ gửi ImageUrl như trước thì ImagesJson giữ null,
+        // hành vi không đổi; nếu ImageUrl rỗng mà có ImageUrls thì ảnh đầu tiên làm đại diện.
+        var imageUrls = CleanImageUrls(request.ImageUrls);
+        var imageUrl = request.ImageUrl ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(imageUrl) && imageUrls.Count > 0) imageUrl = imageUrls[0];
+
         // Sản phẩm mới lưu ở trạng thái hiển thị ngay (IsActive = true) như hành vi seed;
         // admin tắt bằng nút Ẩn / Xóa mềm khi cần (§3.1: Draft chỉ là quy ước hiển thị, chưa có cột trạng thái riêng).
         var product = new Product
         {
             Id = Guid.NewGuid(), Name = request.Name.Trim(), Slug = slug, CategoryId = category.Id,
             Price = request.Price, OriginalPrice = request.OriginalPrice, Stock = request.Stock,
-            Description = request.Description ?? string.Empty, ImageUrl = request.ImageUrl ?? string.Empty,
+            Description = request.Description ?? string.Empty, ImageUrl = imageUrl,
+            ImagesJson = imageUrls.Count > 0 ? JsonSerializer.Serialize(imageUrls) : null,
             IsActive = true, CreatedAt = DateTime.UtcNow
         };
         _db.Products.Add(product);
@@ -153,9 +166,18 @@ public class CreateProductCommandHandler : IRequestHandler<CreateProductCommand,
         return ApiResponse<AdminProductDto>.Ok(ToDto(product, category.Name), "Tạo sản phẩm thành công.");
     }
 
+    /// <summary>Chuẩn hóa danh sách URL ảnh: bỏ rỗng/khoảng trắng, trim, khử trùng, giữ thứ tự.</summary>
+    public static List<string> CleanImageUrls(List<string>? imageUrls)
+        => (imageUrls ?? new List<string>())
+            .Where(u => !string.IsNullOrWhiteSpace(u))
+            .Select(u => u.Trim())
+            .Distinct()
+            .ToList();
+
     public static AdminProductDto ToDto(Product p, string categoryName) => new(
         p.Id, p.Name, p.Slug, p.CategoryId, categoryName, p.Price, p.OriginalPrice,
-        p.Stock, p.ReservedStock, p.IsActive, p.ImageUrl, p.CreatedAt);
+        p.Stock, p.ReservedStock, p.IsActive, p.ImageUrl, p.CreatedAt,
+        GetProductDetailQueryHandler.ParseImages(p.ImagesJson, p.ImageUrl));
 
     public static string Slugify(string value)
     {
@@ -177,7 +199,7 @@ public class CreateProductCommandHandler : IRequestHandler<CreateProductCommand,
 
 public record UpdateProductCommand(
     Guid Id, string Name, Guid CategoryId, decimal Price, decimal? OriginalPrice, int Stock,
-    string Description, string ImageUrl, bool IsActive) : IRequest<ApiResponse<AdminProductDto>>;
+    string Description, string ImageUrl, bool IsActive, List<string>? ImageUrls = null) : IRequest<ApiResponse<AdminProductDto>>;
 
 public class UpdateProductCommandValidator : AbstractValidator<UpdateProductCommand>
 {
@@ -189,6 +211,8 @@ public class UpdateProductCommandValidator : AbstractValidator<UpdateProductComm
             .When(x => x.OriginalPrice.HasValue).WithMessage("Giá gốc phải lớn hơn giá bán.");
         RuleFor(x => x.Stock).GreaterThanOrEqualTo(0).WithMessage("Tồn kho không được âm.");
         RuleFor(x => x.CategoryId).NotEmpty().WithMessage("Sản phẩm phải thuộc 1 danh mục.");
+        RuleForEach(x => x.ImageUrls).MaximumLength(1000).WithMessage("Đường dẫn ảnh quá dài.")
+            .When(x => x.ImageUrls != null);
     }
 }
 
@@ -211,7 +235,21 @@ public class UpdateProductCommandHandler : IRequestHandler<UpdateProductCommand,
         product.OriginalPrice = request.OriginalPrice;
         product.Stock = request.Stock;
         product.Description = request.Description ?? string.Empty;
-        product.ImageUrl = request.ImageUrl ?? string.Empty;
+        // Thư viện ảnh (đợt redesign form admin): chỉ khi client gửi ImageUrls thì mới
+        // động tới ImagesJson (gửi [] = xóa hết thư viện); gửi null = giữ nguyên thư
+        // viện cũ (tương thích client cũ chỉ gửi ImageUrl). ImageUrl rỗng + có ImageUrls
+        // thì ảnh đầu tiên làm đại diện, như lúc tạo mới.
+        if (request.ImageUrls != null)
+        {
+            var imageUrls = CreateProductCommandHandler.CleanImageUrls(request.ImageUrls);
+            product.ImagesJson = imageUrls.Count > 0 ? JsonSerializer.Serialize(imageUrls) : null;
+            product.ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) && imageUrls.Count > 0
+                ? imageUrls[0] : (request.ImageUrl ?? string.Empty);
+        }
+        else
+        {
+            product.ImageUrl = request.ImageUrl ?? string.Empty;
+        }
         product.IsActive = request.IsActive;
         await _db.SaveChangesAsync(ct);
         return ApiResponse<AdminProductDto>.Ok(CreateProductCommandHandler.ToDto(product, category.Name), "Cập nhật sản phẩm thành công.");
@@ -239,9 +277,9 @@ public class DeleteProductCommandHandler : IRequestHandler<DeleteProductCommand,
 
 // ---------- Danh mục (§3) ----------
 
-public record AdminCategoryDto(Guid Id, string Name, string Slug, string? Description, bool IsActive, int SortOrder, int ProductCount);
+public record AdminCategoryDto(Guid Id, string Name, string Slug, string? Description, bool IsActive, int SortOrder, int ProductCount, string? IconUrl = null);
 
-public record CreateCategoryCommand(string Name, string? Description, string? Slug = null, int SortOrder = 0)
+public record CreateCategoryCommand(string Name, string? Description, string? Slug = null, int SortOrder = 0, string? IconUrl = null)
     : IRequest<ApiResponse<AdminCategoryDto>>;
 
 public class CreateCategoryCommandValidator : AbstractValidator<CreateCategoryCommand>
@@ -250,6 +288,7 @@ public class CreateCategoryCommandValidator : AbstractValidator<CreateCategoryCo
     {
         RuleFor(x => x.Name).NotEmpty().Length(2, 150).WithMessage("Tên danh mục phải có từ 2 đến 150 ký tự.");
         RuleFor(x => x.Description).MaximumLength(1000).WithMessage("Mô tả tối đa 1000 ký tự.");
+        RuleFor(x => x.IconUrl).MaximumLength(500).WithMessage("Đường dẫn icon quá dài.");
     }
 }
 
@@ -267,15 +306,16 @@ public class CreateCategoryCommandHandler : IRequestHandler<CreateCategoryComman
         {
             Id = Guid.NewGuid(), Name = request.Name.Trim(), Slug = slug,
             Description = request.Description?.Trim(), IsActive = true, SortOrder = request.SortOrder,
+            IconUrl = string.IsNullOrWhiteSpace(request.IconUrl) ? null : request.IconUrl.Trim(),
             CreatedAt = DateTime.UtcNow
         };
         _db.Categories.Add(category);
         await _db.SaveChangesAsync(ct);
-        return ApiResponse<AdminCategoryDto>.Ok(new AdminCategoryDto(category.Id, category.Name, category.Slug, category.Description, category.IsActive, category.SortOrder, 0), "Tạo danh mục thành công.");
+        return ApiResponse<AdminCategoryDto>.Ok(new AdminCategoryDto(category.Id, category.Name, category.Slug, category.Description, category.IsActive, category.SortOrder, 0, category.IconUrl), "Tạo danh mục thành công.");
     }
 }
 
-public record UpdateCategoryCommand(Guid Id, string Name, string? Description, bool IsActive, int SortOrder)
+public record UpdateCategoryCommand(Guid Id, string Name, string? Description, bool IsActive, int SortOrder, string? Slug = null, string? IconUrl = null)
     : IRequest<ApiResponse<AdminCategoryDto>>;
 
 public class UpdateCategoryCommandValidator : AbstractValidator<UpdateCategoryCommand>
@@ -283,6 +323,8 @@ public class UpdateCategoryCommandValidator : AbstractValidator<UpdateCategoryCo
     public UpdateCategoryCommandValidator()
     {
         RuleFor(x => x.Name).NotEmpty().Length(2, 150).WithMessage("Tên danh mục phải có từ 2 đến 150 ký tự.");
+        RuleFor(x => x.Slug).MaximumLength(150).WithMessage("Slug tối đa 150 ký tự.");
+        RuleFor(x => x.IconUrl).MaximumLength(500).WithMessage("Đường dẫn icon quá dài.");
     }
 }
 
@@ -299,9 +341,21 @@ public class UpdateCategoryCommandHandler : IRequestHandler<UpdateCategoryComman
         category.Description = request.Description?.Trim();
         category.IsActive = request.IsActive;
         category.SortOrder = request.SortOrder;
+        // Slug/IconUrl (đợt redesign form admin): null = giữ nguyên; Slug chỉ đổi khi
+        // gửi lên khác rỗng (kiểm tra trùng trừ chính nó), IconUrl gửi "" = xóa icon.
+        if (!string.IsNullOrWhiteSpace(request.Slug))
+        {
+            var slug = CreateProductCommandHandler.Slugify(request.Slug);
+            if (string.IsNullOrWhiteSpace(slug)) return ApiResponse<AdminCategoryDto>.Fail("Slug không hợp lệ.");
+            if (slug != category.Slug && await _db.Categories.AnyAsync(c => c.Slug == slug, ct))
+                return ApiResponse<AdminCategoryDto>.Fail("Slug danh mục đã tồn tại.");
+            category.Slug = slug;
+        }
+        if (request.IconUrl != null)
+            category.IconUrl = string.IsNullOrWhiteSpace(request.IconUrl) ? null : request.IconUrl.Trim();
         await _db.SaveChangesAsync(ct);
         var count = await _db.Products.CountAsync(p => p.CategoryId == category.Id && !p.IsDeleted, ct);
-        return ApiResponse<AdminCategoryDto>.Ok(new AdminCategoryDto(category.Id, category.Name, category.Slug, category.Description, category.IsActive, category.SortOrder, count), "Cập nhật danh mục thành công.");
+        return ApiResponse<AdminCategoryDto>.Ok(new AdminCategoryDto(category.Id, category.Name, category.Slug, category.Description, category.IsActive, category.SortOrder, count, category.IconUrl), "Cập nhật danh mục thành công.");
     }
 }
 

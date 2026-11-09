@@ -209,6 +209,7 @@ body {
 /* Cart Items */
 .cart-item {
   display: flex;
+}
 
 @keyframes fadeIn {
   from {
