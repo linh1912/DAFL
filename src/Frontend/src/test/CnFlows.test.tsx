@@ -137,6 +137,40 @@ describe('CN Flows - App integration', () => {
     expect(badCall).toBeUndefined();
   });
 
+  it('TC_CN_03b: Price preset "100K – 300K" dien san Tu/Den va ap dung loc ngay', async () => {
+    const fetchMock = vi.fn((url: any) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('/api/auth/me')) return respond({ success: false, data: null });
+      if (urlStr.includes('/api/products')) return respond({ success: true, data: [makeProduct(1)] });
+      return respond({ success: true, data: [] });
+    });
+    globalThis.fetch = fetchMock;
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByTestId('product-card-prod-p1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('price-preset-1'));
+
+    // 2 o Tu/Den duoc dien san + nut preset dang chon.
+    expect(screen.getByTestId('price-from-input')).toHaveValue('100000');
+    expect(screen.getByTestId('price-to-input')).toHaveValue('300000');
+    expect(screen.getByTestId('price-preset-1')).toHaveClass('active');
+
+    // Loc duoc ap dung ngay: co request mang priceFrom=100000 & priceTo=300000.
+    await waitFor(() => {
+      const okCall = fetchMock.mock.calls.find(([url]: any[]) => {
+        const s = String(typeof url === 'string' ? url : url.url);
+        return s.includes('priceFrom=100000') && s.includes('priceTo=300000');
+      });
+      expect(okCall).toBeDefined();
+    });
+  });
+
   it('TC_CN_04: Order detail shows the cancel dialog and cancelling succeeds (CN-08)', async () => {
     localStorage.setItem('dafl_token', 'jwt-cn');
     const order = {

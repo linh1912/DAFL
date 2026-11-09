@@ -3222,6 +3222,17 @@ section[data-testid="category-filter-section"] {
   padding: 3px 0;
 }
 
+/* Link footer (đợt 13 mục 6): giữ đúng kiểu chữ cũ, chỉ đổi màu khi hover. */
+.site-footer a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.site-footer a:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
 .site-footer-brand p {
   max-width: 300px;
   line-height: 1.55;
@@ -3510,6 +3521,30 @@ section[data-testid="category-filter-section"] {
 .price-range-sep {
   color: var(--text-dim);
   font-size: 0.85rem;
+}
+/* Khoảng giá có sẵn: bấm 1 chạm là lọc luôn, không cần gõ Từ/Đến. */
+.price-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.price-preset-btn {
+  border: 1px solid var(--border, #e5e7eb);
+  background: #fff;
+  color: var(--text, #111827);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.price-preset-btn:hover { border-color: var(--primary, #d81b60); color: var(--primary, #d81b60); }
+.price-preset-btn.active {
+  background: var(--primary, #d81b60);
+  border-color: var(--primary, #d81b60);
+  color: #fff;
 }
 .filter-error {
   color: #d81b60;
@@ -4342,7 +4377,7 @@ body { font-size: 1rem; line-height: 1.55; }
   align-items: flex-start;
 }
 .hero-carousel .hero-title { font-size: 2rem; line-height: 1.25; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); white-space: nowrap; }
-.hero-carousel .hero-subtitle { font-size: 1.05rem; }
+.hero-carousel .hero-subtitle { font-size: 1.05rem; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35); }
 .hero-dots { left: 32px; bottom: 18px; }
 @media (max-width: 640px) {
   .hero-carousel, .hero-slide { min-height: 240px; }
@@ -4363,16 +4398,27 @@ body { font-size: 1rem; line-height: 1.55; }
   object-position: center;
   z-index: 0;
 }
-/* Hộp chữ nhỏ, nền tối mờ NHẸ — không còn khối tối to che banner. */
+/* Lớp phủ gradient tối dần từ trái sang: chữ trắng bên trái luôn đọc được
+   trên mọi ảnh banner, không cần hộp nền tối, ảnh bên phải vẫn hiện rõ. */
+.hero-slide::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0.18) 45%, rgba(0, 0, 0, 0) 70%);
+}
+/* Chữ banner KHÔNG còn hộp đen: bỏ hẳn nền tối, chữ trắng đọc trực tiếp trên
+   ảnh nhờ lớp phủ gradient tối dần từ trái sang (xem .hero-slide::after). */
 .hero-text-box {
   position: relative;
   z-index: 2;
-  background: rgba(0, 0, 0, 0.35);
-  border-radius: 14px;
-  padding: 18px 22px;
-  max-width: 480px;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  max-width: 520px;
 }
-.hero-text-box .hero-top-badge { background: rgba(255, 255, 255, 0.25); }
+.hero-text-box .hero-top-badge { background: rgba(255, 255, 255, 0.28); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
 .hero-text-box .hero-subtitle { margin-bottom: 16px; }
 .hero-nav-btn {
   position: absolute;
@@ -4660,10 +4706,10 @@ body { line-height: 1.5; }
 
 /* ---------- (5) Trang chu: banner (anh 37a: mui ten khong de chu) ---------- */
 .hero-carousel { border-radius: 20px; }
-.hero-text-box { margin-left: 56px; max-width: 420px; padding: 32px; }
+.hero-text-box { margin-left: 56px; max-width: 420px; padding: 12px 0; }
 .hero-dots { left: 50%; transform: translateX(-50%); }
 @media (max-width: 640px) {
-  .hero-text-box { margin-left: 40px; max-width: calc(100% - 64px); padding: 20px; }
+  .hero-text-box { margin-left: 40px; max-width: calc(100% - 64px); padding: 8px 0; }
 }
 
 /* ---------- (6) Dai cam ket / icon danh muc / thuong hieu ---------- */

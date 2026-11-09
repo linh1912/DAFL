@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { AuthModal } from '../components/auth/AuthModal';
+import { AuthModal } from '../../../Shared/components/auth/AuthModal';
 
 describe('Authentication Module - AuthModal Component', () => {
   const defaultProps = {
@@ -160,14 +160,15 @@ describe('Authentication Module - AuthModal Component', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('TC_AUTH_10: CN removes the gate notice, OTP verification, forgot-password and lockout UI', () => {
+  it('TC_AUTH_10: CN removes the gate notice, OTP verification and lockout UI (forgot-password is back in wave 13)', () => {
     render(<AuthModal {...defaultProps} />);
 
     expect(screen.queryByTestId('auth-required-notice')).not.toBeInTheDocument();
     expect(screen.queryByTestId('register-verify-form')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('forgot-password-form')).not.toBeInTheDocument();
-    expect(screen.queryByText('Quên mật khẩu?')).not.toBeInTheDocument();
     expect(screen.queryByTestId('login-attempts-warning')).not.toBeInTheDocument();
+    expect(screen.queryByText('Đăng nhập bằng mã OTP')).not.toBeInTheDocument();
+    // Đợt 13, mục 1: link "Quên mật khẩu" đã trở lại — xem TC_AUTH_25.
+    expect(screen.getByTestId('forgot-password-link')).toBeInTheDocument();
   });
 
   it('TC_AUTH_11: Should show per-field login errors from props', () => {
@@ -328,6 +329,151 @@ describe('Authentication Module - AuthModal Component', () => {
 
     expect(screen.getByTestId('register-email-error')).toHaveTextContent('Email đã được sử dụng');
     expect(screen.getByTestId('register-phone-error')).toHaveTextContent('Số điện thoại đã được sử dụng');
+  });
+
+  // ==========================================
+  // Đợt 13, mục 1: quên mật khẩu — gửi mã 6 số qua email thật (SMTP)
+  // ==========================================
+  const mockFetchOk = (body: unknown, status = 200) =>
+    vi.fn().mockResolvedValue({ status, json: async () => body });
+
+  const openForgotForm = () => {
+    render(<AuthModal {...defaultProps} />);
+    fireEvent.click(screen.getByTestId('forgot-password-link'));
+    expect(screen.getByTestId('forgot-password-form')).toBeInTheDocument();
+  };
+
+  it('TC_AUTH_25: Forgot-password link is shown on the login tab (shop) and in admin-only mode', () => {
+    const { unmount } = render(<AuthModal {...defaultProps} />);
+    expect(screen.getByTestId('forgot-password-link')).toHaveTextContent('Quên mật khẩu?');
+    unmount();
+
+    render(<AuthModal {...defaultProps} adminOnly />);
+    expect(screen.getByTestId('forgot-password-link')).toBeInTheDocument();
+    // Admin vẫn chỉ có form đăng nhập, không có tab đăng ký.
+    expect(screen.queryByTestId('auth-tab-register')).not.toBeInTheDocument();
+  });
+
+  it('TC_AUTH_26: Clicking the link opens the forgot form; back link returns to login', () => {
+    openForgotForm();
+
+    expect(screen.queryByTestId('login-form')).not.toBeInTheDocument();
+    expect(screen.getByTestId('forgot-password-email-input')).toBeInTheDocument();
+    expect(screen.getByTestId('forgot-password-submit-btn')).toHaveTextContent('Gửi mã đặt lại');
+
+    fireEvent.click(screen.getByTestId('forgot-password-back-btn'));
+    expect(screen.getByTestId('login-form')).toBeInTheDocument();
+    expect(screen.queryByTestId('forgot-password-form')).not.toBeInTheDocument();
+  });
+
+  it('TC_AUTH_27: Forgot submit with empty/invalid email shows an error and does not call the API', () => {
+    const fetchMock = mockFetchOk({ success: true, message: 'ok', data: null });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      openForgotForm();
+
+      fireEvent.click(screen.getByTestId('forgot-password-submit-btn'));
+      expect(screen.getByTestId('forgot-password-email-error')).toHaveTextContent('Vui lòng nhập email.');
+
+      fireEvent.change(screen.getByTestId('forgot-password-email-input'), { target: { value: 'khong-phai-email' } });
+      fireEvent.click(screen.getByTestId('forgot-password-submit-btn'));
+      expect(screen.getByTestId('forgot-password-email-error')).toHaveTextContent('Email không đúng định dạng.');
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('TC_AUTH_28: Valid email calls POST /api/auth/forgot-password and shows the reset form', async () => {
+    const fetchMock = mockFetchOk({ success: true, message: 'Nếu email tồn tại, mã đặt lại đã được gửi.', data: null });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      openForgotForm();
+
+      fireEvent.change(screen.getByTestId('forgot-password-email-input'), { target: { value: 'demo@dafl.vn' } });
+      fireEvent.click(screen.getByTestId('forgot-password-submit-btn'));
+
+      await waitFor(() => expect(screen.getByTestId('reset-password-form')).toBeInTheDocument());
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toBe('/api/auth/forgot-password');
+      expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ email: 'demo@dafl.vn' });
+      expect(screen.getByTestId('forgot-password-notice')).toHaveTextContent('Nếu email tồn tại, mã đặt lại đã được gửi.');
+      expect(screen.getByTestId('reset-code-input')).toBeInTheDocument();
+      expect(screen.getByTestId('reset-new-password-input')).toBeInTheDocument();
+      expect(screen.getByTestId('reset-confirm-password-input')).toBeInTheDocument();
+      expect(screen.getByTestId('reset-password-submit-btn')).toHaveTextContent('Đặt lại mật khẩu');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('TC_AUTH_29: Reset form validates code, password policy and confirmation before calling the API', async () => {
+    const fetchMock = mockFetchOk({ success: true, message: 'Nếu email tồn tại, mã đặt lại đã được gửi.', data: null });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      openForgotForm();
+      fireEvent.change(screen.getByTestId('forgot-password-email-input'), { target: { value: 'demo@dafl.vn' } });
+      fireEvent.click(screen.getByTestId('forgot-password-submit-btn'));
+      await waitFor(() => expect(screen.getByTestId('reset-password-form')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('reset-password-submit-btn'));
+      expect(screen.getByTestId('reset-code-error')).toHaveTextContent('Mã đặt lại gồm 6 chữ số.');
+      expect(screen.getByTestId('reset-new-password-error')).toHaveTextContent('Vui lòng nhập mật khẩu mới.');
+      expect(screen.getByTestId('reset-confirm-password-error')).toHaveTextContent('Vui lòng nhập lại mật khẩu.');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      fireEvent.change(screen.getByTestId('reset-code-input'), { target: { value: '123' } });
+      fireEvent.change(screen.getByTestId('reset-new-password-input'), { target: { value: 'yeu123' } });
+      fireEvent.change(screen.getByTestId('reset-confirm-password-input'), { target: { value: 'yeu123' } });
+      fireEvent.click(screen.getByTestId('reset-password-submit-btn'));
+      expect(screen.getByTestId('reset-code-error')).toHaveTextContent('Mã đặt lại gồm 6 chữ số.');
+      expect(screen.getByTestId('reset-new-password-error')).toHaveTextContent('Mật khẩu chưa đáp ứng đủ các điều kiện bảo mật bên dưới.');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      fireEvent.change(screen.getByTestId('reset-code-input'), { target: { value: '123456' } });
+      fireEvent.change(screen.getByTestId('reset-new-password-input'), { target: { value: 'Password1!' } });
+      fireEvent.change(screen.getByTestId('reset-confirm-password-input'), { target: { value: 'Password2!' } });
+      fireEvent.click(screen.getByTestId('reset-password-submit-btn'));
+      expect(screen.getByTestId('reset-confirm-password-error')).toHaveTextContent('Mật khẩu xác nhận không khớp');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('TC_AUTH_30: Valid code + new password calls POST /api/auth/reset-password and shows success', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ status: 200, json: async () => ({ success: true, message: 'Nếu email tồn tại, mã đặt lại đã được gửi.', data: null }) })
+      .mockResolvedValueOnce({ status: 200, json: async () => ({ success: true, message: 'Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại.', data: 'Đặt lại mật khẩu thành công.' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      openForgotForm();
+      fireEvent.change(screen.getByTestId('forgot-password-email-input'), { target: { value: 'demo@dafl.vn' } });
+      fireEvent.click(screen.getByTestId('forgot-password-submit-btn'));
+      await waitFor(() => expect(screen.getByTestId('reset-password-form')).toBeInTheDocument());
+
+      fireEvent.change(screen.getByTestId('reset-code-input'), { target: { value: '123456' } });
+      fireEvent.change(screen.getByTestId('reset-new-password-input'), { target: { value: 'Password1!' } });
+      fireEvent.change(screen.getByTestId('reset-confirm-password-input'), { target: { value: 'Password1!' } });
+      fireEvent.click(screen.getByTestId('reset-password-submit-btn'));
+
+      await waitFor(() => expect(screen.getByTestId('forgot-password-success')).toBeInTheDocument());
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/reset-password');
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+        email: 'demo@dafl.vn',
+        code: '123456',
+        newPassword: 'Password1!',
+        confirmNewPassword: 'Password1!',
+      });
+      expect(screen.getByTestId('forgot-password-success')).toHaveTextContent('Đặt lại mật khẩu thành công');
+
+      fireEvent.click(screen.getByTestId('forgot-password-back-btn'));
+      expect(screen.getByTestId('login-form')).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

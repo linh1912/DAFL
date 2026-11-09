@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CheckoutForm } from '../components/checkout/CheckoutForm';
-import { User, UserAddress } from '../types';
+import { User, UserAddress } from '../../../Shared/types';
 
 describe('Checkout & Order Module - CheckoutForm Component', () => {
   const mockUser: User = {

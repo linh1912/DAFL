@@ -1,6 +1,7 @@
 using DAFL.Backend.Common;
 using DAFL.Backend.Features.Auth;
 using DAFL.Backend.Infrastructure.Data;
+using DAFL.Backend.Infrastructure.Email;
 using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -8,12 +9,11 @@ using Microsoft.EntityFrameworkCore;
 namespace DAFL.Backend.Features.Auth;
 
 /// <summary>
-/// Quên / đặt lại mật khẩu (§9.1) — lỗ hổng lớn nhất của bản hiện tại.
+/// Quên / đặt lại mật khẩu (§9.1).
 /// Luôn trả cùng 1 câu dù email có tồn tại hay không (chống dò tài khoản).
 /// Mã 6 số được BĂM (BCrypt) trước khi lưu, hạn 15 phút, tối đa 5 lần nhập sai, tối đa 3 lần gửi lại / 1 giờ / email.
-/// LƯU Ý GỬI MAIL: fork hiện tại không có SMTP/email sender (theo CN đã bỏ OTP email) nên mã được ghi
-/// vào log ở môi trường Development để kiểm thử; khi triển khai thật phải gắn SMTP rồi thay LogCodeForDev
-/// bằng gửi mail thật — xem ghi chú trong ForgotPasswordCommandHandler.
+/// GỬI MAIL: mã được gửi bằng email thật qua IEmailSender (SMTP, cấu hình SMTP_* trong .env);
+/// CHỈ khi SMTP chưa cấu hình đủ thì mới ghi mã ra log ở môi trường Development để kiểm thử.
 /// </summary>
 public record ForgotPasswordCommand(string Email) : IRequest<ApiResponse<string>>;
 
@@ -30,12 +30,14 @@ public class ForgotPasswordCommandHandler : IRequestHandler<ForgotPasswordComman
     private readonly AppDbContext _db;
     private readonly ILogger<ForgotPasswordCommandHandler> _logger;
     private readonly IHostEnvironment _env;
+    private readonly IEmailSender _emailSender;
 
-    public ForgotPasswordCommandHandler(AppDbContext db, ILogger<ForgotPasswordCommandHandler> logger, IHostEnvironment env)
+    public ForgotPasswordCommandHandler(AppDbContext db, ILogger<ForgotPasswordCommandHandler> logger, IHostEnvironment env, IEmailSender emailSender)
     {
         _db = db;
         _logger = logger;
         _env = env;
+        _emailSender = emailSender;
     }
 
     public async Task<ApiResponse<string>> Handle(ForgotPasswordCommand request, CancellationToken ct)
@@ -64,14 +66,41 @@ public class ForgotPasswordCommandHandler : IRequestHandler<ForgotPasswordComman
         });
         await _db.SaveChangesAsync(ct);
 
-        if (_env.IsDevelopment())
+        // Đợt 13, mục 1: gửi mã bằng EMAIL THẬT khi SMTP đã cấu hình đủ (SMTP_* trong .env).
+        // Chưa cấu hình → giữ hành vi cũ: chỉ ghi mã ra log ở Development để kiểm thử.
+        // Lỗi gửi mail không được làm lộ mã hay fail request (luôn trả câu chung chống dò tài khoản).
+        if (_emailSender.IsConfigured)
         {
-            // CHỈ Development: ghi mã ra log để kiểm thử khi chưa có SMTP. Production: thay bằng gửi email thật.
-            _logger.LogWarning("[DEV-ONLY] Password reset code for {Email}: {Code} (expires in 15 minutes)", email, code);
+            var sent = await _emailSender.SendAsync(email, "DAFL — Mã đặt lại mật khẩu của bạn",
+                $"""
+                <p>Xin chào,</p>
+                <p>Bạn vừa yêu cầu đặt lại mật khẩu cho tài khoản DAFL. Mã đặt lại của bạn là:</p>
+                <p style="font-size: 28px; font-weight: bold; letter-spacing: 6px;">{code}</p>
+                <p>Mã có hiệu lực trong <b>15 phút</b> và chỉ dùng được một lần. Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này.</p>
+                <p>Trân trọng,<br/>Đội ngũ DAFL</p>
+                """, ct);
+            if (sent)
+            {
+                _logger.LogInformation("Password reset code emailed to {Email}.", email);
+            }
+            else if (_env.IsDevelopment())
+            {
+                // SMTP cấu hình nhưng gửi lỗi (sai mật khẩu/mạng...): ghi mã ra log ở dev để vẫn kiểm thử được.
+                _logger.LogWarning("[DEV-ONLY] Password reset email failed for {Email}; code: {Code} (expires in 15 minutes)", email, code);
+            }
+            else
+            {
+                _logger.LogWarning("Password reset email failed for {Email}. Check SMTP configuration.", email);
+            }
+        }
+        else if (_env.IsDevelopment())
+        {
+            // CHỈ Development và CHỈ khi SMTP chưa cấu hình: ghi mã ra log để kiểm thử.
+            _logger.LogWarning("[DEV-ONLY] Password reset code for {Email}: {Code} (expires in 15 minutes). SMTP is not configured — set SMTP_* in .env to send real emails.", email, code);
         }
         else
         {
-            _logger.LogInformation("Password reset code issued for {Email}. Email delivery is not configured yet — wire SMTP before production use.", email);
+            _logger.LogInformation("Password reset code issued for {Email}. SMTP is not configured — set SMTP_* in .env to send real emails.", email);
         }
         return ApiResponse<string>.Ok(genericMessage);
     }

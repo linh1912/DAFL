@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ShoppingBag, X, CreditCard, Clock, Copy, CheckCircle2, RotateCcw, ArrowLeft, AlertTriangle, MapPin } from 'lucide-react';
-import { CartItem, Voucher, CheckoutResult, User } from '../../types';
+import { CartItem, Voucher, CheckoutResult, User } from '../../../../Shared/types';
 import { formatPrice, formatTime } from '../../utils/formatters';
 import { CartItemRow } from './CartItemRow';
 import { VoucherSection } from './VoucherSection';

@@ -20,6 +20,7 @@ using DAFL.Backend.Features.Vouchers;
 using DAFL.Backend.Infrastructure.Auth;
 using DAFL.Backend.Infrastructure.Caching;
 using DAFL.Backend.Infrastructure.Data;
+using DAFL.Backend.Infrastructure.Email;
 using DAFL.Backend.Infrastructure.Hubs;
 using DAFL.Backend.Infrastructure.Messaging;
 using DAFL.Backend.Infrastructure.Payments;
@@ -134,8 +135,10 @@ builder.Services.AddHostedService<ReservationCleanupWorker>();
 builder.Services.AddHostedService<MembershipMaintenanceWorker>();
 
 // 7b. JWT (CN-02): đăng nhập/đăng ký/social cấp JWT HS256 hạn 1 giờ, secret từ Jwt:Secret (env JWT_SECRET).
-// Theo CN, hệ thống KHÔNG còn OTP email → không còn SMTP/email sender trong bản này.
+// Email sender (đợt 13, mục 1): gửi mã quên mật khẩu qua SMTP (cấu hình SMTP_* trong .env);
+// chưa cấu hình đủ thì IEmailSender.IsConfigured = false và handler chỉ ghi mã ra log ở Development.
 builder.Services.AddSingleton<IJwtService, JwtService>();
+builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 
 // 7c. Social login (Luồng 6 — bản chốt v4): BE tự xác thực token với Google/Facebook qua HttpClient.
 // Cấu hình ở section "Social" (GoogleClientId / FacebookAppId / FacebookAppSecret qua biến môi trường file .env).
@@ -892,7 +895,7 @@ app.MapPost("/api/auth/forgot-password", async (ForgotPasswordRequest request, I
 })
 .WithName("ForgotPassword")
 .WithSummary("Quên mật khẩu — xin mã đặt lại (§9.1)")
-.WithDescription("Luôn trả cùng 1 câu dù email có tồn tại hay không (chống dò tài khoản). Mã 6 số băm trước khi lưu, hạn 15 phút, tối đa 5 lần nhập sai, tối đa 3 lần gửi/1 giờ. Lưu ý: fork chưa có SMTP nên mã chỉ ghi log ở Development — cần gắn SMTP trước khi dùng thật.")
+.WithDescription("Luôn trả cùng 1 câu dù email có tồn tại hay không (chống dò tài khoản). Mã 6 số băm trước khi lưu, hạn 15 phút, tối đa 5 lần nhập sai, tối đa 3 lần gửi/1 giờ. Mã được gửi bằng email thật qua SMTP (IEmailSender, cấu hình SMTP_* trong .env); chỉ khi SMTP chưa cấu hình thì mã mới ghi log ở Development.")
 .WithTags("Auth - Xác thực");
 
 app.MapPost("/api/auth/reset-password", async (ResetPasswordRequest request, IMediator mediator) =>
@@ -1142,7 +1145,7 @@ app.MapPut("/api/admin/profile", async (UpdateProfileRequest request, HttpContex
 .WithSummary("Sửa thông tin cá nhân admin: họ tên/SĐT (SĐT không trùng tài khoản khác); email không sửa được")
 .WithTags("Admin - Quản trị");
 
-app.MapPost("/api/admin/change-password", async (ChangePasswordRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+app.MapPost("/api/admin/change-password", async (ChangePasswordRequest request, HttpContext httpContext, AppDbContext dbContext, IMediator mediator, IEmailSender emailSender) =>
 {
     var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
     if (error != null) return error;
@@ -1150,8 +1153,20 @@ app.MapPost("/api/admin/change-password", async (ChangePasswordRequest request, 
     if (result.Success)
     {
         // TokenVersion đã tăng trong handler → mọi JWT cũ bị vô hiệu, admin phải đăng nhập lại.
-        // Gửi email cảnh báo: chưa có SMTP trong fork nên chỉ ghi log (xem ghi chú ở ForgotPassword).
-        app.Logger.LogWarning("Admin password changed for {Email}. All sessions invalidated.", admin.Email);
+        // Gửi email cảnh báo đổi mật khẩu (đợt 13, mục 1): SMTP đã cấu hình thì gửi mail thật,
+        // chưa cấu hình thì chỉ ghi log.
+        var mailSent = emailSender.IsConfigured && await emailSender.SendAsync(admin.Email,
+            "DAFL Admin — Mật khẩu quản trị vừa được thay đổi",
+            $"""
+            <p>Xin chào,</p>
+            <p>Mật khẩu tài khoản quản trị DAFL (<b>{admin.Email}</b>) vừa được thay đổi lúc {DateTime.UtcNow:HH:mm} UTC ngày {DateTime.UtcNow:dd/MM/yyyy}.</p>
+            <p>Nếu không phải bạn thực hiện, hãy liên hệ ngay quản trị hệ thống và đổi lại mật khẩu.</p>
+            <p>Trân trọng,<br/>Đội ngũ DAFL</p>
+            """);
+        if (!mailSent)
+        {
+            app.Logger.LogWarning("Admin password changed for {Email}. All sessions invalidated. Warning email not sent (SMTP not configured or send failed).", admin.Email);
+        }
         await AdminGuard.WriteAuditAsync(dbContext, admin, "ADMIN_CHANGE_PASSWORD", "User", admin.Id.ToString(),
             null, new { ChangedAt = DateTime.UtcNow }, AdminGuard.ClientIp(httpContext));
     }
@@ -1378,10 +1393,11 @@ app.MapGet("/api/admin/customers/{id:guid}", async (Guid id, HttpContext httpCon
     }
     var orderCount = await dbContext.Orders.CountAsync(o => o.UserId == id);
     var orders = await mediator.Send(new GetOrderHistoryQuery(id, null, 1, 10, null));
+    var availablePoints = await MembershipService.AvailablePointsAsync(dbContext, user.Id, default);
     return Results.Ok(ApiResponse<object>.Ok(new
     {
         customer = new AdminCustomerDto(user.Id, user.Email, user.FullName, user.PhoneNumber, user.Role, user.IsLocked,
-            user.MembershipTier, user.TotalSpent12m, orderCount, user.CreatedAt, user.LastLoginAt),
+            user.MembershipTier, user.TotalSpent12m, orderCount, user.CreatedAt, user.LastLoginAt, availablePoints),
         recentOrders = orders.Data ?? new List<OrderHistoryDto>()
     }));
 })
@@ -1453,16 +1469,32 @@ app.MapPut("/api/admin/promotions/{id:guid}", async (Guid id, UpdatePromotionReq
 {
     var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
     if (error != null) return error;
-    var result = await mediator.Send(new UpdatePromotionCommand(id, request.MaxUses, request.ExpiryDate, request.Description, request.MinOrderAmount, request.MaxDiscountAmount));
+    var result = await mediator.Send(new UpdatePromotionCommand(id, request.MaxUses, request.ExpiryDate, request.Description, request.MinOrderAmount, request.MaxDiscountAmount, request.DiscountValue));
     if (result.Success)
     {
         await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_UPDATE_PROMOTION", "Voucher", id.ToString(),
-            null, new { request.MaxUses, request.ExpiryDate }, AdminGuard.ClientIp(httpContext));
+            null, new { request.MaxUses, request.ExpiryDate, request.DiscountValue }, AdminGuard.ClientIp(httpContext));
     }
     return result.Success ? Results.Ok(result) : Results.BadRequest(result);
 })
 .WithName("AdminUpdatePromotion")
 .WithSummary("Admin sửa khuyến mãi (Draft sửa hết; Active chỉ tăng lượt/kéo dài hạn)")
+.WithTags("Admin - Quản trị");
+
+app.MapDelete("/api/admin/promotions/{id:guid}", async (Guid id, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
+{
+    var (admin, error) = await AdminGuard.RequireSuperAdminAsync(httpContext, dbContext);
+    if (error != null) return error;
+    var result = await mediator.Send(new DeletePromotionCommand(id));
+    if (result.Success)
+    {
+        await AdminGuard.WriteAuditAsync(dbContext, admin!, "ADMIN_DELETE_PROMOTION", "Voucher", id.ToString(),
+            new { Status = "Draft" }, null, AdminGuard.ClientIp(httpContext));
+    }
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+})
+.WithName("AdminDeletePromotion")
+.WithSummary("Admin xóa khuyến mãi (chỉ voucher Nháp chưa có lượt dùng)")
 .WithTags("Admin - Quản trị");
 
 app.MapPost("/api/admin/promotions/{id:guid}/activate", async (Guid id, HttpContext httpContext, AppDbContext dbContext, IMediator mediator) =>
@@ -1680,7 +1712,7 @@ public record CreatePromotionRequest(
     int? MaxUses, int? MaxUsesPerUser, string? MinTier, string ScopeType, Guid? ScopeCategoryId,
     string? ScopeProductIds);
 
-public record UpdatePromotionRequest(int? MaxUses, DateTime? ExpiryDate, string? Description, decimal? MinOrderAmount, decimal? MaxDiscountAmount);
+public record UpdatePromotionRequest(int? MaxUses, DateTime? ExpiryDate, string? Description, decimal? MinOrderAmount, decimal? MaxDiscountAmount, decimal? DiscountValue = null);
 
 public record DisablePromotionRequest(string Reason);
 

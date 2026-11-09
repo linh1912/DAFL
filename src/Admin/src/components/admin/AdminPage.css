@@ -1,0 +1,1163 @@
+/* ============================================================
+ * DAFL Admin — giao diện kiểu Spark Admin.
+ * Mọi class đều nằm dưới tiền tố `.spark-admin` để không đụng
+ * style của shop (localhost:3000). Chỉ đổi giao diện, không đổi
+ * hành vi/handler/API nào của AdminPage.
+ * ============================================================ */
+
+.spark-admin {
+  --sa-green-dark: #051c12;
+  --sa-green: #65a30d;
+  --sa-green-bright: #b4f105;
+  --sa-sidebar-bg: #051c12;
+  --sa-page-bg: #f5f7fa;
+  --sa-card-border: #e5e7eb;
+  --sa-text: #111827;
+  --sa-muted: #6b7280;
+  --sa-danger: #dc2626;
+  display: flex;
+  min-height: 100vh;
+  background: var(--sa-page-bg);
+  color: var(--sa-text);
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 1rem;
+  text-align: left;
+}
+
+.spark-admin *,
+.spark-admin *::before,
+.spark-admin *::after {
+  box-sizing: border-box;
+}
+
+/* ---------- Sidebar ---------- */
+.spark-admin .sa-sidebar {
+  width: 264px;
+  flex-shrink: 0;
+  background: var(--sa-sidebar-bg);
+  color: #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 40;
+}
+
+.spark-admin .sa-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 18px 14px;
+  color: #fff;
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.spark-admin .sa-logo-star {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--sa-green-bright);
+  color: #051c12;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.spark-admin .sa-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 12px 12px;
+}
+
+.spark-admin .sa-nav-group {
+  margin-top: 14px;
+}
+
+.spark-admin .sa-nav-group:first-child {
+  margin-top: 4px;
+}
+
+.spark-admin .sa-nav-group-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #64748b;
+  padding: 0 10px 6px;
+}
+
+.spark-admin .sa-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  font-size: 0.95rem;
+  padding: 10px 12px;
+  margin-bottom: 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.spark-admin .sa-nav-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.spark-admin .sa-nav-btn.sa-active {
+  background: rgba(180, 241, 5, 0.12);
+  color: var(--sa-green-bright);
+  font-weight: 700;
+}
+
+.spark-admin .sa-nav-icon {
+  font-size: 1.05rem;
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.spark-admin .sa-sidebar-user {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.spark-admin .sa-sidebar-user-info {
+  min-width: 0;
+}
+
+.spark-admin .sa-sidebar-user-name {
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spark-admin .sa-sidebar-user-email {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Avatar tròn chữ cái đầu — màu nền hash theo tên */
+.spark-admin .sa-avatar {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--sa-green-dark);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spark-admin .sa-avatar.sa-avatar-sm {
+  width: 32px;
+  height: 32px;
+  font-size: 0.85rem;
+}
+
+/* Sidebar thu gọn (desktop): chỉ còn icon */
+.spark-admin.sa-collapsed .sa-sidebar {
+  width: 76px;
+}
+
+.spark-admin.sa-collapsed .sa-logo-text,
+.spark-admin.sa-collapsed .sa-nav-group-title,
+.spark-admin.sa-collapsed .sa-nav-label,
+.spark-admin.sa-collapsed .sa-sidebar-user-info {
+  display: none;
+}
+
+.spark-admin.sa-collapsed .sa-logo {
+  justify-content: center;
+  padding: 20px 0 14px;
+}
+
+.spark-admin.sa-collapsed .sa-nav-btn {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.spark-admin.sa-collapsed .sa-sidebar-user {
+  justify-content: center;
+  padding: 14px 0;
+}
+
+/* ---------- Khung chính + Topbar ---------- */
+.spark-admin .sa-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.spark-admin .sa-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: #fff;
+  border-bottom: 1px solid var(--sa-card-border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+}
+
+.spark-admin .sa-topbar-btn {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #374151;
+  font-size: 1.15rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.spark-admin .sa-topbar-btn:hover {
+  background: #f3f4f6;
+}
+
+.spark-admin .sa-topbar-spacer {
+  flex: 1;
+}
+
+.spark-admin .sa-notif-dot {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--sa-green-bright);
+  border: 2px solid #fff;
+}
+
+.spark-admin .sa-popover-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.spark-admin .sa-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  width: 330px;
+  max-width: 86vw;
+  background: #fff;
+  border: 1px solid var(--sa-card-border);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+  z-index: 50;
+  overflow: hidden;
+}
+
+.spark-admin .sa-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.spark-admin .sa-popover-head button {
+  border: none;
+  background: none;
+  color: var(--sa-green-dark);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.spark-admin .sa-notif-item {
+  padding: 12px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.9rem;
+}
+
+.spark-admin .sa-notif-item:last-child {
+  border-bottom: none;
+}
+
+.spark-admin .sa-notif-item.sa-unread {
+  background: #f7fee7;
+}
+
+.spark-admin .sa-notif-title {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.spark-admin .sa-notif-msg {
+  color: #4b5563;
+  line-height: 1.45;
+}
+
+.spark-admin .sa-notif-time {
+  color: var(--sa-muted);
+  font-size: 0.78rem;
+  margin-top: 4px;
+}
+
+.spark-admin .sa-popover-empty {
+  padding: 18px 14px;
+  text-align: center;
+  color: var(--sa-muted);
+  font-size: 0.9rem;
+}
+
+.spark-admin .sa-topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 2px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--sa-text);
+}
+
+.spark-admin .sa-topbar-user-name {
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Nội dung: tràn full màn hình (không giới hạn 1240px) ---------- */
+.spark-admin .sa-content {
+  padding: 22px 28px 40px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+/* ---------- Khung ngoài: app Admin riêng cũng phải tràn full màn hình ----------
+   Đây mới là chỗ giới hạn thật sự: App.tsx bọc toàn bộ app Admin trong
+   <div class="app-container admin-only-app">, mà .app-container trong
+   index.css bị giới hạn max-width: 1280px + margin auto nên cả trang Admin
+   bị bó vào giữa màn hình (thừa 2 khoảng trắng 2 bên) dù .sa-content bên
+   trong đã bỏ giới hạn. Chỉ sửa ở chế độ admin-riêng, không đụng shop. */
+.app-container.admin-only-app {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+.spark-admin .sa-pagehead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.spark-admin .sa-pagehead h1 {
+  font-size: 1.7rem;
+  font-weight: 800;
+  color: var(--sa-text);
+  margin: 0 0 4px;
+}
+
+.spark-admin .sa-pagehead p {
+  margin: 0;
+  color: var(--sa-muted);
+  font-size: 0.92rem;
+}
+
+.spark-admin .sa-notice {
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+.spark-admin .sa-notice button {
+  float: right;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.spark-admin .sa-error {
+  color: #c62828;
+  font-size: 0.95rem;
+}
+
+.spark-admin .sa-muted-text {
+  color: var(--sa-muted);
+  font-size: 0.92rem;
+}
+
+/* ---------- Nút / form ---------- */
+.spark-admin .sa-btn {
+  font-size: 0.95rem;
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--sa-green-dark);
+  background: var(--sa-green-dark);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.spark-admin .sa-btn:hover {
+  background: #0e3a22;
+}
+
+.spark-admin .sa-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.spark-admin .sa-btn-ghost {
+  background: #fff;
+  color: var(--sa-green-dark);
+}
+
+.spark-admin .sa-btn-ghost:hover {
+  background: #f7fee7;
+}
+
+.spark-admin .sa-btn-danger {
+  background: var(--sa-danger);
+  border-color: var(--sa-danger);
+}
+
+.spark-admin .sa-btn-danger:hover {
+  background: #b91c1c;
+}
+
+.spark-admin .sa-btn-danger-ghost {
+  background: #fff;
+  color: var(--sa-danger);
+  border-color: #fecaca;
+}
+
+.spark-admin .sa-btn-danger-ghost:hover {
+  background: #fef2f2;
+}
+
+.spark-admin .sa-input,
+.spark-admin select.sa-input,
+.spark-admin textarea.sa-input {
+  font-size: 0.95rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  background: #fff;
+}
+
+.spark-admin .sa-input:focus {
+  outline: none;
+  border-color: var(--sa-green);
+  box-shadow: 0 0 0 3px rgba(180, 241, 5, 0.35);
+}
+
+.spark-admin .sa-field {
+  display: block;
+  margin-bottom: 0.1rem;
+}
+
+.spark-admin .sa-field > span {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.spark-admin .sa-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* Trường chiếm cả 2 cột trong lưới form (mô tả, checkbox, trường theo phạm vi). */
+.spark-admin .sa-form-grid .sa-field-wide {
+  grid-column: 1 / -1;
+}
+
+.spark-admin .sa-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+}
+
+.spark-admin .sa-form-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+  flex-wrap: wrap;
+}
+
+/* ---------- Card / bảng ---------- */
+.spark-admin .sa-card {
+  background: #fff;
+  border: 1px solid var(--sa-card-border);
+  border-radius: 16px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+
+.spark-admin .sa-card h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.spark-admin .sa-card h4 {
+  font-size: 1.05rem;
+  margin: 1.1rem 0 0.5rem;
+}
+
+.spark-admin .sa-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.spark-admin .sa-toolbar .sa-input {
+  max-width: 320px;
+}
+
+.spark-admin .sa-toolbar select.sa-input {
+  max-width: 220px;
+}
+
+.spark-admin .sa-toolbar-left {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.spark-admin .sa-toolbar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Nút "+ Thêm mới" ở toolbar từng mục: xanh lá đậm, chữ trắng. */
+.spark-admin .sa-btn-add {
+  background: var(--sa-green-dark);
+  border-color: var(--sa-green-dark);
+  color: #fff;
+  font-weight: 700;
+}
+
+.spark-admin .sa-btn-add:hover {
+  background: #0e3a22;
+}
+
+/* ---------- Phân trang bảng admin (10 dòng/trang, client-side) ---------- */
+.spark-admin .sa-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 4px 2px;
+}
+
+.spark-admin .sa-pagination-info {
+  color: var(--sa-muted);
+  font-size: 0.9rem;
+}
+
+.spark-admin .sa-pagination-btns {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.spark-admin .sa-page-btn {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--sa-card-border);
+  background: #fff;
+  color: #374151;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.spark-admin .sa-page-btn:hover:not(:disabled) {
+  border-color: var(--sa-green);
+  background: #f7fee7;
+}
+
+.spark-admin .sa-page-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.spark-admin .sa-page-btn.sa-page-active {
+  background: var(--sa-green-dark);
+  border-color: var(--sa-green-dark);
+  color: #fff;
+  font-weight: 700;
+}
+
+.spark-admin .sa-table-wrap {
+  overflow-x: auto;
+  background: #fff;
+  border: 1px solid var(--sa-card-border);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+
+.spark-admin .sa-table-wrap > table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+}
+
+.spark-admin .sa-table-wrap > table th {
+  text-align: left;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--sa-card-border);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sa-muted);
+  font-weight: 700;
+  white-space: nowrap;
+  background: #fafafa;
+}
+
+.spark-admin .sa-table-wrap > table td {
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.92rem;
+  vertical-align: middle;
+}
+
+.spark-admin .sa-table-wrap > table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.spark-admin .sa-table-wrap > table tbody tr.sa-clickable {
+  cursor: pointer;
+}
+
+.spark-admin .sa-table-wrap > table tbody tr.sa-clickable:hover {
+  background: #f8fafc;
+}
+
+.spark-admin .sa-user-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.spark-admin .sa-user-cell-names {
+  min-width: 0;
+}
+
+.spark-admin .sa-user-cell-names strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.spark-admin .sa-user-cell-names small {
+  color: var(--sa-muted);
+  font-size: 0.8rem;
+}
+
+.spark-admin .sa-money {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.spark-admin .sa-code {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Pill trạng thái: chấm tròn + nhãn tiếng Việt */
+.spark-admin .sa-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.spark-admin .sa-pill .sa-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.spark-admin .sa-pill-green {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.spark-admin .sa-pill-amber {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.spark-admin .sa-pill-red {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.spark-admin .sa-pill-blue {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.spark-admin .sa-pill-purple {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.spark-admin .sa-pill-gray {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+/* Nút icon tròn cho thao tác */
+.spark-admin .sa-actions {
+  white-space: nowrap;
+}
+
+.spark-admin .sa-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--sa-card-border);
+  background: #fff;
+  color: #374151;
+  font-size: 1rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.spark-admin .sa-icon-btn:last-child {
+  margin-right: 0;
+}
+
+.spark-admin .sa-icon-btn:hover {
+  border-color: var(--sa-green);
+  color: var(--sa-green-dark);
+  background: #f7fee7;
+}
+
+.spark-admin .sa-icon-btn.sa-icon-danger:hover {
+  border-color: var(--sa-danger);
+  color: var(--sa-danger);
+  background: #fef2f2;
+}
+
+/* ---------- Dashboard ---------- */
+.spark-admin .sa-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.spark-admin .sa-stat {
+  background: #fff;
+  border: 1px solid var(--sa-card-border);
+  border-radius: 16px;
+  padding: 1rem 1.1rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+
+.spark-admin .sa-stat-label {
+  color: var(--sa-muted);
+  font-size: 0.92rem;
+}
+
+.spark-admin .sa-stat-value {
+  font-size: 1.9rem;
+  font-weight: 800;
+  color: var(--sa-green-dark);
+  margin-top: 2px;
+}
+
+.spark-admin .sa-section-title {
+  font-size: 1.25rem;
+  margin: 1.5rem 0 0.75rem;
+}
+
+.spark-admin .sa-section-title:first-child {
+  margin-top: 0;
+}
+
+.spark-admin .sa-range-btns {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.spark-admin .sa-list {
+  margin: 0 0 1rem;
+  padding-left: 22px;
+  line-height: 1.8;
+}
+
+/* ---------- Trang gate (403 / chưa có admin / đang kiểm tra) ---------- */
+.spark-admin.sa-gate-page {
+  display: block;
+  padding: 2.5rem 1rem;
+}
+
+.spark-admin .sa-gate-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  font-size: 1.05rem;
+}
+
+.spark-admin .sa-gate-card {
+  background: #fff;
+  border: 1px solid var(--sa-card-border);
+  border-radius: 16px;
+  padding: 2rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06);
+  text-align: center;
+}
+
+.spark-admin .sa-gate-card.sa-gate-danger {
+  border-color: #f3c1d3;
+}
+
+.spark-admin .sa-gate-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(180, 241, 5, 0.3);
+  color: #051c12;
+  font-size: 2.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1rem;
+}
+
+.spark-admin .sa-gate-card h1 {
+  font-size: 1.9rem;
+  color: var(--sa-green-dark);
+  margin: 0 0 0.5rem;
+}
+
+.spark-admin .sa-gate-card p {
+  color: #555;
+  margin: 0 0 0.5rem;
+}
+
+.spark-admin .sa-gate-steps {
+  background: #fff;
+  border: 1px solid var(--sa-card-border);
+  border-radius: 16px;
+  padding: 1.5rem 2rem;
+  margin-top: 1rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06);
+  text-align: left;
+}
+
+.spark-admin .sa-gate-steps h2 {
+  font-size: 1.4rem;
+  margin: 0 0 0.75rem;
+}
+
+.spark-admin .sa-gate-steps ol {
+  margin: 0;
+  padding-left: 1.25rem;
+  line-height: 1.8;
+}
+
+.spark-admin .sa-gate-steps pre {
+  background: #f5f5f5;
+  padding: 1rem;
+  overflow-x: auto;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.spark-admin .sa-gate-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+}
+
+.spark-admin .sa-checking {
+  padding: 2rem;
+  font-size: 1.1rem;
+  color: var(--sa-muted);
+}
+
+/* ---------- Modal chi tiết dùng chung (SparkModal) ---------- */
+.spark-admin .sa-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 28, 18, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px 16px;
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.spark-admin .sa-modal {
+  background: #fff;
+  border-radius: 16px;
+  width: 640px;
+  max-width: 100%;
+  box-shadow: 0 24px 64px rgba(5, 28, 18, 0.35), 0 4px 16px rgba(5, 28, 18, 0.2);
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.spark-admin .sa-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 0;
+}
+
+.spark-admin .sa-modal-head h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #051c12;
+}
+
+.spark-admin .sa-modal-close {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--sa-card-border);
+  background: #fff;
+  color: #374151;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.spark-admin .sa-modal-close:hover {
+  border-color: var(--sa-danger);
+  color: var(--sa-danger);
+  background: #fef2f2;
+}
+
+.spark-admin .sa-modal-body {
+  padding: 16px 20px;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.spark-admin .sa-modal-body h4 {
+  font-size: 1.05rem;
+  margin: 1.1rem 0 0.5rem;
+}
+
+.spark-admin .sa-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0 20px 18px;
+}
+
+.spark-admin .sa-modal-img {
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: 12px;
+  margin-bottom: 12px;
+  display: block;
+}
+
+/* Dòng label / giá trị trong modal chi tiết */
+.spark-admin .sa-kv {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 4px 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.spark-admin .sa-kv:last-child {
+  border-bottom: none;
+}
+
+.spark-admin .sa-kv > span {
+  color: var(--sa-muted);
+  font-size: 0.88rem;
+}
+
+.spark-admin .sa-kv > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Ảnh nhỏ trong bảng sản phẩm */
+.spark-admin .sa-thumb {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  object-fit: cover;
+  background: #f1f5f9;
+}
+
+.spark-admin .sa-thumb-ph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+}
+
+/* Overlay cho drawer mobile */
+.spark-admin .sa-overlay {
+  display: none;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 900px) {
+  .spark-admin .sa-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.3);
+  }
+
+  .spark-admin.sa-drawer-open .sa-sidebar {
+    transform: translateX(0);
+  }
+
+  .spark-admin.sa-drawer-open .sa-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 35;
+  }
+
+  /* Thu gọn không áp dụng trên mobile: drawer luôn hiện đủ nhãn */
+  .spark-admin.sa-collapsed .sa-sidebar {
+    width: 264px;
+  }
+
+  .spark-admin.sa-collapsed .sa-logo-text,
+  .spark-admin.sa-collapsed .sa-nav-group-title,
+  .spark-admin.sa-collapsed .sa-nav-label,
+  .spark-admin.sa-collapsed .sa-sidebar-user-info {
+    display: block;
+  }
+
+  .spark-admin.sa-collapsed .sa-logo {
+    justify-content: flex-start;
+    padding: 20px 18px 14px;
+  }
+
+  .spark-admin.sa-collapsed .sa-nav-btn {
+    justify-content: flex-start;
+    padding: 10px 12px;
+  }
+
+  .spark-admin.sa-collapsed .sa-sidebar-user {
+    justify-content: flex-start;
+    padding: 14px 16px;
+  }
+
+  .spark-admin .sa-topbar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .spark-admin .sa-topbar-user-name {
+    display: none;
+  }
+
+  .spark-admin .sa-content {
+    padding: 16px 12px 32px;
+  }
+
+  .spark-admin .sa-pagehead h1 {
+    font-size: 1.4rem;
+  }
+
+}
+
+/* ---------- Mobile: form 1 cột, toolbar + phân trang xếp dọc ---------- */
+@media (max-width: 640px) {
+  .spark-admin .sa-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .spark-admin .sa-toolbar-right {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .spark-admin .sa-pagination {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

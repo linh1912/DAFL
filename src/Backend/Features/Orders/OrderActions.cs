@@ -47,7 +47,7 @@ public class ConfirmReceivedCommandHandler : IRequestHandler<ConfirmReceivedComm
 public record ReturnRequestDto(
     Guid Id, Guid OrderId, string? OrderDisplayCode, Guid ProductId, string ProductName,
     int Quantity, string Reason, string? Note, string Status, string? AdminNote,
-    decimal RefundAmount, string? RefundStatus, DateTime CreatedAt);
+    decimal RefundAmount, string? RefundStatus, DateTime CreatedAt, Guid? RefundId = null);
 
 public record CreateReturnRequestCommand(
     Guid UserId, Guid OrderId, Guid ProductId, int Quantity, string Reason, string? Note)
@@ -111,14 +111,14 @@ public class CreateReturnRequestCommandHandler : IRequestHandler<CreateReturnReq
             });
             await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
-            return ApiResponse<ReturnRequestDto>.Ok(ToDto(ret, order.OrderDisplayCode, 0, null),
+            return ApiResponse<ReturnRequestDto>.Ok(ToDto(ret, order.OrderDisplayCode, 0, null, null),
                 "Đã gửi yêu cầu trả hàng. Quản trị viên sẽ xem xét và phản hồi.");
         });
     }
 
-    public static ReturnRequestDto ToDto(ReturnRequest r, string? displayCode, decimal refundAmount, string? refundStatus) => new(
+    public static ReturnRequestDto ToDto(ReturnRequest r, string? displayCode, decimal refundAmount, string? refundStatus, Guid? refundId) => new(
         r.Id, r.OrderId, displayCode, r.ProductId, r.ProductName, r.Quantity, r.Reason, r.Note,
-        r.Status, r.AdminNote, refundAmount, refundStatus, r.CreatedAt);
+        r.Status, r.AdminNote, refundAmount, refundStatus, r.CreatedAt, refundId);
 }
 
 public record ListReturnRequestsQuery(Guid? UserId, Guid? OrderId, string? Status, bool AdminView = false)
@@ -140,7 +140,7 @@ public class ListReturnRequestsQueryHandler : IRequestHandler<ListReturnRequests
         {
             var refund = r.Refunds.OrderByDescending(x => x.CreatedAt).FirstOrDefault();
             return CreateReturnRequestCommandHandler.ToDto(r, r.Order?.OrderDisplayCode,
-                refund?.Amount ?? 0, refund?.Status);
+                refund?.Amount ?? 0, refund?.Status, refund?.Id);
         }).ToList());
     }
 }

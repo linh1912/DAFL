@@ -6,6 +6,7 @@ export type AppRoute =
   | 'product'
   | 'orders'
   | 'profile'
+  | 'membership'
   | 'notifications'
   | 'payment';
 

@@ -7,8 +7,8 @@ using Microsoft.EntityFrameworkCore;
 namespace DAFL.Backend.Features.Orders.CancelOrder;
 
 /// <summary>
-/// Hủy đơn hàng (CN-08.3): chỉ hủy được khi đơn đang ở "Chờ xác nhận"
-/// (COD chưa xử lý — Status Pending + COD, hoặc PayOS đã thanh toán — Status Paid).
+/// Hủy đơn hàng (CN-08.3, đợt 13): khách hủy được từ Pending (COD) / Paid / Confirmed / Preparing.
+/// Đơn Pending + PayOS (chưa thanh toán) KHÔNG hủy tay được — đơn tự chuyển Expired khi hết 15 phút giữ chỗ.
 /// Trong một transaction: → Đã hủy, lưu lý do + thời điểm hủy, hoàn tồn kho theo từng dòng.
 /// Hủy lần hai / hủy ở trạng thái khác → "Đơn không còn có thể hủy" và KHÔNG hoàn kho lại (idempotent).
 /// </summary>
@@ -45,7 +45,10 @@ public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, Api
                     return ApiResponse<string>.Fail("Không có quyền truy cập đơn hàng này.");
                 }
 
-                var cancellable = order.Status == OrderStatus.Paid
+                // Đợt 13: hủy được từ Pending (COD) / Paid / Confirmed / Preparing — khớp
+                // OrderStateMachine.CustomerCanCancel. Confirmed/Preparing đã trừ kho thật (COD)
+                // hoặc đã Paid nên nhánh hoàn kho dưới đây (StockDeducted) xử lý đúng.
+                var cancellable = order.Status is OrderStatus.Paid or OrderStatus.Confirmed or OrderStatus.Preparing
                     || (order.Status == OrderStatus.Pending && order.PaymentMethod == "COD");
                 if (!cancellable)
                 {

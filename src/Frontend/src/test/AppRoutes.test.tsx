@@ -124,6 +124,19 @@ describe('App Routing & Navigation System (React Router)', () => {
     });
   });
 
+  it('redirects unauthenticated user from protected route "/membership" to "/login" (đợt 13, mục 2)', async () => {
+    render(
+      <MemoryRouter initialEntries={['/membership']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('auth-modal')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('membership-page')).not.toBeInTheDocument();
+  });
+
   it('renders Product Detail view on "/product/:id" without infinite loop', async () => {
     render(
       <MemoryRouter initialEntries={['/product/prod-demo']}>
@@ -352,7 +365,7 @@ describe('App Routing & Navigation System (React Router)', () => {
     ] as const) {
       expect(screen.getByTestId(`hero-slide-${i}`)).toHaveTextContent(title);
     }
-    // Chữ nằm trong hộp nhỏ nền tối mờ nhẹ (class hero-text-box) — không bị ảnh che.
+    // Chữ nằm trực tiếp trên ảnh nhờ lớp phủ gradient (class hero-text-box) — không còn hộp đen.
     const box = document.querySelector('.hero-text-box');
     expect(box).not.toBeNull();
     expect(box).toHaveTextContent('Mỹ phẩm chính hãng');

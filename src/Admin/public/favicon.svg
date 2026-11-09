@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="dafl-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e02e24" />
+      <stop offset="100%" stop-color="#ff5722" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <!-- Modern App Icon Squircle Background -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#dafl-gradient)" />
+
+  <!-- Inner Subtle Border for Depth -->
+  <rect x="2.5" y="2.5" width="59" height="59" rx="13.5" fill="none" stroke="rgba(255, 255, 255, 0.25)" stroke-width="1" />
+
+  <!-- Crisp Shopping Bag Icon (matching Lucide ShoppingBag in DAFL brand) -->
+  <g transform="translate(10, 9) scale(1.83)" filter="url(#glow)">
+    <!-- Bag handles -->
+    <path d="M16 10a4 4 0 0 1-8 0" fill="none" stroke="#ffffff" stroke-width="2.3" stroke-linecap="round" />
+    <!-- Bag body -->
+    <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" fill="none" stroke="#ffffff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" />
+    <!-- Bag fold line -->
+    <path d="M3 6h18" stroke="#ffffff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+</svg>

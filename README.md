@@ -8,24 +8,35 @@ Quality Gate tự động. Repo này chứa mã nguồn FE + BE của SUT.
 - **Admin (trang quản trị):** http://localhost:3001
 - **Backend API:** http://localhost:5000
 
-## Tách Web / Admin — thực tế đang làm được gì
+## Tách Web / Admin — cấu trúc thư mục riêng (đợt 13)
 
-Shop và admin **chung 1 codebase frontend** (`src/Frontend`), **chung 1 backend
-API**, chỉ khác nhau ở cờ build + Dockerfile + service Docker:
+Shop và admin **tách hẳn thành 2 app riêng** dưới `src/` (npm workspaces),
+code dùng chung để ở `src/Shared/`; backend vẫn 1 API chung:
 
-| | Shop (web) | Admin |
-|---|---|---|
-| Service Docker | `frontend` (`dafl-frontend`) | `admin` (`dafl-admin`) |
-| Cổng | `${FRONTEND_PORT:-3000}` | `${ADMIN_PORT:-3001}` |
-| Dockerfile | `src/Frontend/Dockerfile` | `src/Frontend/Dockerfile.admin` |
-| Cờ build | (mặc định, không đặt cờ) | `VITE_ADMIN_ONLY=true` (cố định trong `Dockerfile.admin`) |
-| Script npm | `npm run build:web` | `npm run build:admin` |
-| Test FE (vitest) | `npm run test:web` | `npm run test:admin` |
+| | Shop (web) | Admin | Dùng chung |
+|---|---|---|---|
+| Thư mục | `src/Frontend/` | `src/Admin/` | `src/Shared/` |
+| Service Docker | `frontend` (`dafl-frontend`) | `admin` (`dafl-admin`) | — |
+| Cổng | `${FRONTEND_PORT:-3000}` | `${ADMIN_PORT:-3001}` | — |
+| Dockerfile | `src/Frontend/Dockerfile` | `src/Admin/Dockerfile` | — |
+| Script npm (chạy ở `src/`) | `npm run build:web` / `npm run test:web` | `npm run build:admin` / `npm run test:admin` | — |
 
-Khi build với `VITE_ADMIN_ONLY=true`, app chỉ render trang quản trị
-(route `/` chuyển sang `/admin`), ẩn toàn bộ shop (header, banner, giỏ hàng…),
-title đổi thành "DAFL Admin — Quản trị". Xem `src/App.tsx` (`IS_ADMIN_ONLY`)
-và `src/test/AdminOnlyMode.test.tsx`.
+```text
+src/
+├── Frontend/        ← app shop: App.tsx, components/ (shop, giỏ, checkout, hội viên...), test/
+├── Admin/           ← app admin riêng: App.tsx, components/admin/AdminPage.tsx, test/
+├── Shared/          ← dùng chung: components/auth/AuthModal.tsx (đăng nhập + quên mật khẩu),
+│                      utils/api.ts, styles/auth.css, types.ts
+├── package.json     ← npm workspaces: ["Frontend", "Admin", "Shared"]
+└── node_modules/    ← hoist chung (chạy `npm install` 1 lần ở src/)
+```
+
+`src/Shared/components/auth/AuthModal.tsx` là form đăng nhập dùng chung cả
+shop lẫn admin (kể cả luồng "Quên mật khẩu" đợt 13); ở admin nó render dạng
+trang (`isModal={false}`, `adminOnly`) với khung `.auth-page-wrapper` căn
+giữa và **không có nút quay lại**. Trang Hội viên riêng (`/membership`) chỉ
+có ở shop. Xem `src/package.json` (scripts `build:web`, `build:admin`,
+`test:web`, `test:admin`).
 
 ### Backend KHÔNG tách
 
@@ -45,24 +56,17 @@ docker compose build admin && docker compose up -d admin         # admin :3001
 # Đổi cổng admin: đặt ADMIN_PORT trong file .env rồi chạy lại compose
 ```
 
-Build/test FE trực tiếp bằng npm (trong `src/Frontend`). Các script mới chạy
-được cả trên Windows lẫn Linux/CI — không dùng tiền tố `VAR=value` kiểu Unix:
+Build/test FE trực tiếp bằng npm (ở `src/` — workspace root, chạy
+`npm install` 1 lần ở đây; không dùng tiền tố `VAR=value` kiểu Unix nên
+chạy được cả trên Windows lẫn Linux/CI):
 
 ```bash
-cd src/Frontend
-npm run build        # build mặc định (bản shop)
-npm run build:web    # build bản shop thường (tương đương build)
-npm run build:admin  # build bản admin-riêng: `tsc && vite build --mode admin`
-npm run test         # chạy toàn bộ test vitest
-npm run test:web     # chạy vitest TRỪ 2 file test admin
-npm run test:admin   # chạy vitest CHỈ 2 file AdminPage.test.tsx + AdminOnlyMode.test.tsx
+cd src
+npm run build:web    # build app shop (tsc + vite build, workspace dafl-frontend)
+npm run build:admin  # build app admin riêng (workspace dafl-admin)
+npm run test:web     # vitest app shop
+npm run test:admin   # vitest app admin riêng
 ```
-
-Cơ chế của `build:admin`: Vite với `--mode admin` tự nạp file
-`src/Frontend/.env.admin` (chỉ chứa `VITE_ADMIN_ONLY=true`, không có secret
-nên được commit cùng repo). `Dockerfile.admin` đặt thêm `ENV
-VITE_ADMIN_ONLY=true` làm lớp dự phòng nếu thiếu file `.env.admin` trong
-context build. `Dockerfile` cũ giữ nguyên cho shop, không đổi.
 
 ## Kiểm thử Selenium (repo test riêng)
 
@@ -108,8 +112,6 @@ stage khác không đổi.
 
 ## Giới hạn còn lại của đợt tách này
 
-- Admin và shop vẫn chung 1 codebase FE — tách ở mức cờ build + Dockerfile +
-  service Docker, **không** dời code, **không** tách thành 2 repo/thư mục FE.
 - Backend là 1 service chung, chưa tách.
 - Tài khoản admin mặc định được seed bởi backend (`admin@dafl.vn` /
   `Admin@123` khi DB chưa có tài khoản này); đổi mật khẩu admin không nằm

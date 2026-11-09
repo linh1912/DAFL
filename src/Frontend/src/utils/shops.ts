@@ -1,4 +1,4 @@
-import { Product } from '../types';
+import { Product } from '../../../Shared/types';
 
 /**
  * Tên gian hàng hiển thị trên card sản phẩm (UI-only, chưa có entity Shop ở BE).

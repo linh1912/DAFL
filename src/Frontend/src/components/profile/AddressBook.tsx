@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { MapPin, Plus, Pencil, Trash2, Check, Home } from 'lucide-react';
-import { UserAddress } from '../../types';
-import { apiJson } from '../../utils/api';
+import { UserAddress } from '../../../../Shared/types';
+import { apiJson } from '../../../../Shared/utils/api';
 import {
   VIETNAM_PROVINCES,
   PROVINCES_AVAILABLE,

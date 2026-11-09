@@ -1,0 +1,14 @@
+/* DAFL Admin — style riêng của app admin (ngoài AdminPage.css và
+ * Shared/styles/auth.css). AdminPage (.spark-admin) tự định nghĩa biến
+ * --sa-* của nó; file này chỉ có khung trang + nền. Theme Spark giữ nguyên:
+ * sidebar #051C12 + nhấn #B4F105 (đã có trong AdminPage.css). */
+
+#root {
+  min-height: 100vh;
+}
+
+.admin-app {
+  min-height: 100vh;
+  background: #f5f7fa;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}

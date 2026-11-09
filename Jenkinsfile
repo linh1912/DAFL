@@ -64,7 +64,7 @@ pipeline {
                 echo "=== Build và khởi chạy SUT (System Under Test) trên Docker ==="
                 dir(env.WORKTREE_DIR) {
                     sh """
-                        # Build container backend và frontend phiên bản mới nhất
+                        # Build container backend và 2 app frontend (shop + admin) phiên bản mới nhất
                         docker compose -p ${PROJECT_NAME} -f docker-compose.yml build backend frontend admin
 
                         # Chạy toàn bộ services (Postgres, Kafka, Backend, Frontend)
@@ -294,9 +294,9 @@ pipeline {
                 echo "=== Tất cả các Test & Quality Gate đã PASSED! Tiến hành cập nhật Container ==="
                 dir(env.WORKTREE_DIR) {
                     sh """
-                        # 1. Dừng và gỡ bỏ container backend/frontend cũ
-                        docker compose -p ${PROJECT_NAME} -f docker-compose.yml stop backend frontend || true
-                        docker compose -p ${PROJECT_NAME} -f docker-compose.yml rm -f backend frontend || true
+                        # 1. Dừng và gỡ bỏ container backend/frontend/admin cũ
+                        docker compose -p ${PROJECT_NAME} -f docker-compose.yml stop backend frontend admin || true
+                        docker compose -p ${PROJECT_NAME} -f docker-compose.yml rm -f backend frontend admin || true
 
                         # 2. Khởi tạo container mới từ image vừa build và pass test
                         docker compose -p ${PROJECT_NAME} -f docker-compose.yml up -d --remove-orphans
@@ -330,6 +330,7 @@ pipeline {
             echo "=========================================================="
             echo "🎉 Pipeline thành công: Functional & Performance Quality Gates PASSED!"
             echo "👉 Frontend : http://localhost:3000"
+            echo "👉 Admin    : http://localhost:3001"
             echo "👉 Backend  : http://localhost:5000"
             echo "=========================================================="
         }

@@ -1,14 +1,14 @@
 import React from 'react';
 import {
   ShoppingBag, Search, Bell, LogOut, User as UserIcon,
-  Sun, Moon, ChevronDown, X, Package, Store, Newspaper, ShieldCheck
+  Sun, Moon, ChevronDown, X, Package, Store, Newspaper, ShieldCheck, Award
 } from 'lucide-react';
-import { User } from '../../types';
+import { User } from '../../../../Shared/types';
 
 export interface HeaderProps {
   searchQuery: string;
   setSearchQuery: (val: string) => void;
-  onNavigate: (route: 'home' | 'cart' | 'login' | 'register' | 'orders' | 'profile' | 'notifications' | 'admin') => void;
+  onNavigate: (route: 'home' | 'cart' | 'login' | 'register' | 'orders' | 'profile' | 'membership' | 'notifications' | 'admin') => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   unreadCount: number;
@@ -181,6 +181,23 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Package size={16} className="dropdown-item-icon" />
                   <span className="dropdown-item-label">Đơn hàng của tôi</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="dropdown-nav-item"
+                  onClick={() => {
+                    setIsAccountDropdownOpen(false);
+                    if (!user) {
+                      onOpenAuth();
+                    } else {
+                      onNavigate('membership');
+                    }
+                  }}
+                  data-testid="dropdown-membership-btn"
+                >
+                  <Award size={16} className="dropdown-item-icon" />
+                  <span className="dropdown-item-label">Hội viên của tôi</span>
                 </button>
 
                 <button

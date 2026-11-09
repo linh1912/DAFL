@@ -1,0 +1,4 @@
+# Build context của service frontend/admin là ./src.
+**/node_modules
+**/dist
+**/dist-ssr

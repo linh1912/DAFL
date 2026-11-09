@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Minus, Trash2 } from 'lucide-react';
-import { CartItem } from '../../types';
+import { CartItem } from '../../../../Shared/types';
 import { formatPrice } from '../../utils/formatters';
 import { shopNameFor } from '../../utils/shops';
 

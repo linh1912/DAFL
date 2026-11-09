@@ -165,12 +165,14 @@ public class DisablePromotionCommandHandler : IRequestHandler<DisablePromotionCo
 }
 
 /// <summary>
-/// Sửa khuyến mãi: Draft sửa toàn bộ; đã Active chỉ được tăng tổng lượt và kéo dài ngày kết thúc (§7.2).
+/// Sửa khuyến mãi: Draft sửa toàn bộ (mô tả/giá trị/hạn/lượt/đơn tối thiểu/trần giảm);
+/// đã Active chỉ được tăng tổng lượt và kéo dài ngày kết thúc (§7.2).
 /// Các trường khác gửi lên ở trạng thái Active sẽ bị bỏ qua (trả kèm ghi chú trong message).
 /// </summary>
 public record UpdatePromotionCommand(
     Guid Id, int? MaxUses, DateTime? ExpiryDate,
-    string? Description, decimal? MinOrderAmount, decimal? MaxDiscountAmount)
+    string? Description, decimal? MinOrderAmount, decimal? MaxDiscountAmount,
+    decimal? DiscountValue = null)
     : IRequest<ApiResponse<AdminPromotionDto>>;
 
 public class UpdatePromotionCommandValidator : AbstractValidator<UpdatePromotionCommand>
@@ -180,6 +182,7 @@ public class UpdatePromotionCommandValidator : AbstractValidator<UpdatePromotion
         RuleFor(x => x.MaxUses).GreaterThan(0).When(x => x.MaxUses.HasValue).WithMessage("Tổng lượt phải lớn hơn 0.");
         RuleFor(x => x.MinOrderAmount).GreaterThanOrEqualTo(0).When(x => x.MinOrderAmount.HasValue).WithMessage("Đơn tối thiểu không được âm.");
         RuleFor(x => x.MaxDiscountAmount).GreaterThanOrEqualTo(0).When(x => x.MaxDiscountAmount.HasValue).WithMessage("Trần giảm không được âm.");
+        RuleFor(x => x.DiscountValue).GreaterThan(0).When(x => x.DiscountValue.HasValue).WithMessage("Giá trị giảm phải lớn hơn 0.");
     }
 }
 
@@ -202,6 +205,12 @@ public class UpdatePromotionCommandHandler : IRequestHandler<UpdatePromotionComm
             if (request.MaxDiscountAmount.HasValue) voucher.MaxDiscountAmount = request.MaxDiscountAmount.Value;
             if (request.ExpiryDate.HasValue) voucher.ExpiryDate = request.ExpiryDate;
             if (request.MaxUses.HasValue) voucher.MaxUses = request.MaxUses;
+            if (request.DiscountValue.HasValue)
+            {
+                if (voucher.DiscountType == "Percentage" && request.DiscountValue.Value > 100)
+                    return ApiResponse<AdminPromotionDto>.Fail("Giảm theo % phải từ 1 đến 100.");
+                voucher.DiscountValue = request.DiscountValue.Value;
+            }
         }
         else
         {
@@ -222,6 +231,29 @@ public class UpdatePromotionCommandHandler : IRequestHandler<UpdatePromotionComm
         }
         await _db.SaveChangesAsync(ct);
         return ApiResponse<AdminPromotionDto>.Ok(CreatePromotionCommandHandler.ToDto(voucher), "Đã cập nhật khuyến mãi." + note);
+    }
+}
+
+/// <summary>
+/// Xóa khuyến mãi: CHỈ voucher Draft mới xóa được (§7.2, đợt 13). Voucher đã chạy
+/// (Active/Disabled/Expired) hoặc đã có lượt dùng thì từ chối — dùng Tắt khẩn cấp thay thế.
+/// </summary>
+public record DeletePromotionCommand(Guid Id) : IRequest<ApiResponse<string>>;
+
+public class DeletePromotionCommandHandler : IRequestHandler<DeletePromotionCommand, ApiResponse<string>>
+{
+    private readonly AppDbContext _db;
+    public DeletePromotionCommandHandler(AppDbContext db) => _db = db;
+
+    public async Task<ApiResponse<string>> Handle(DeletePromotionCommand request, CancellationToken ct)
+    {
+        var voucher = await _db.Vouchers.FirstOrDefaultAsync(v => v.Id == request.Id, ct);
+        if (voucher == null) return ApiResponse<string>.Fail("Không tìm thấy khuyến mãi.");
+        if (voucher.Status != "Draft") return ApiResponse<string>.Fail("Chỉ xóa được khuyến mãi đang ở trạng thái Nháp.");
+        if (voucher.UsedCount > 0) return ApiResponse<string>.Fail("Khuyến mãi đã có lượt dùng, không xóa được.");
+        _db.Vouchers.Remove(voucher);
+        await _db.SaveChangesAsync(ct);
+        return ApiResponse<string>.Ok("Đã xóa khuyến mãi.");
     }
 }
 

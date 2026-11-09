@@ -69,8 +69,15 @@ services:
       - KafkaSettings__BootstrapServers=kafka:9092
       - Frontend__BaseUrl=http://localhost:${FRONTEND_PORT:-3000}
       # JWT (CN-02): secret ký token hạn 1 giờ. Đặt JWT_SECRET trong file .env (chuỗi ngẫu nhiên dài) — xem .env.example.
-      # (Bản CN không còn OTP email nên SMTP không còn được dùng.)
       - Jwt__Secret=${JWT_SECRET:-}
+      # SMTP (đợt 13, mục 1): gửi email đặt lại mật khẩu thật. Điền SMTP_* vào .env — xem .env.example.
+      # Để trống → IEmailSender.IsConfigured = false, quên mật khẩu chỉ ghi mã ra log ở Development.
+      - Smtp__Host=${SMTP_HOST:-}
+      - Smtp__Port=${SMTP_PORT:-587}
+      - Smtp__Username=${SMTP_USERNAME:-}
+      - Smtp__Password=${SMTP_PASSWORD:-}
+      - Smtp__From=${SMTP_FROM:-}
+      - Smtp__EnableSsl=${SMTP_ENABLE_SSL:-true}
       # Social login (Google/Facebook): tạo OAuth client / Meta app rồi điền vào .env — xem .env.example.
       # Để trống → nút provider tương ứng tự ẩn (GET /api/auth/social/config trả enabled = false).
       - Social__GoogleClientId=${GOOGLE_CLIENT_ID:-}
@@ -86,10 +93,12 @@ services:
       - dafl-network
 
   # 5. Frontend: ReactJS + Vite (Served via Nginx Alpine)
+  # App shop riêng ở src/Frontend; build context là ./src (workspace npm)
+  # để import được code dùng chung src/Shared. Không còn cờ VITE_ADMIN_ONLY.
   frontend:
     build:
-      context: ./src/Frontend
-      dockerfile: Dockerfile
+      context: ./src
+      dockerfile: Frontend/Dockerfile
     container_name: dafl-frontend
     restart: unless-stopped
     ports:
@@ -99,14 +108,14 @@ services:
     networks:
       - dafl-network
 
-  # 6. Admin riêng: cùng code frontend, build với VITE_ADMIN_ONLY=true nên chỉ
-  # render trang quản trị (route / -> /admin), chạy ở localhost riêng 3001.
-  # API vẫn dùng chung backend qua nginx proxy /api như bản shop (không cần
-  # sửa gì thêm). Bật/tắt cổng bằng ADMIN_PORT trong .env (mặc định 3001).
+  # 6. Admin riêng: app độc lập ở src/Admin (route / -> /admin), chạy ở
+  # localhost riêng 3001. API vẫn dùng chung backend qua nginx proxy /api
+  # như bản shop (không cần sửa gì thêm). Bật/tắt cổng bằng ADMIN_PORT
+  # trong .env (mặc định 3001). Build context ./src như service frontend.
   admin:
     build:
-      context: ./src/Frontend
-      dockerfile: Dockerfile.admin
+      context: ./src
+      dockerfile: Admin/Dockerfile
     container_name: dafl-admin
     restart: unless-stopped
     ports:

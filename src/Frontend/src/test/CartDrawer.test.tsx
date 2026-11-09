@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CartDrawer } from '../components/cart/CartDrawer';
-import { CartItem, Voucher } from '../types';
+import { CartItem, Voucher } from '../../../Shared/types';
 
 describe('Cart Management Module - CartDrawer Component', () => {
   const mockCartItems: CartItem[] = [

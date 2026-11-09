@@ -1,6 +1,6 @@
 import React from 'react';
 import { Star, Plus, Store } from 'lucide-react';
-import { Product } from '../../types';
+import { Product } from '../../../../Shared/types';
 import { formatPrice } from '../../utils/formatters';
 import { IMAGE_PLACEHOLDER } from '../../utils/images';
 import { shopNameFor } from '../../utils/shops';

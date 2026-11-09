@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Search, X } from 'lucide-react';
-import { Category } from '../../types';
+import { Category } from '../../../../Shared/types';
 import { shortCategoryName } from '../../utils/shops';
 
 export interface CategoryFilterProps {

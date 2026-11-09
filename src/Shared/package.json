@@ -1,0 +1,1 @@
+{"description":"Code dùng chung giữa app Shop (src/Frontend) và app Admin (src/Admin): api client, types DTO, AuthModal (đăng nhập shop + admin), CSS form auth. Không build riêng — được import trực tiếp từ 2 app qua đường dẫn tương đối ../../Shared/....","name":"@dafl/shared","private":true,"version":"1.0.0"}

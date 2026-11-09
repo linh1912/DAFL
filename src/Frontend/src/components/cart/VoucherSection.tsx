@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tag } from 'lucide-react';
-import { Voucher } from '../../types';
+import { Voucher } from '../../../../Shared/types';
 import { formatPrice } from '../../utils/formatters';
 
 export interface VoucherSectionProps {

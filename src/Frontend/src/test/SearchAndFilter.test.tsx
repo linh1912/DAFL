@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CategoryFilter } from '../components/product/CategoryFilter';
 import { Header } from '../components/common/Header';
-import { Category } from '../types';
+import { Category } from '../../../Shared/types';
 
 describe('Search & Filter Module', () => {
   const mockCategories: Category[] = [

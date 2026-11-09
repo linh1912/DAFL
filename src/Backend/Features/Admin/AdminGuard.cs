@@ -88,8 +88,12 @@ public static class AdminGuard
 }
 
 /// <summary>
-/// Máy trạng thái đơn hàng (§4). Fork cũ chỉ có Pending/Paid/Cancelled (+Preparing/Shipping/Delivered/Expired);
-/// bản mở rộng thêm Confirmed, Completed, ReturnRequested. Mọi chuyển trạng thái (kể cả gọi API trực tiếp)
+/// Máy trạng thái đơn hàng (§4, đợt 13). Luồng chính:
+/// Pending → Paid (PayOS webhook) → Confirmed → Preparing → Shipping → Delivered → Completed.
+/// COD bỏ qua Paid: Pending → Confirmed. Lối tắt cho phép: Paid → Preparing, Confirmed → Shipping.
+/// Hủy được từ Pending / Paid / Confirmed / Preparing (xem CustomerCanCancel / AdminCanCancel).
+/// Expired chỉ do hệ thống đặt (ReservationCleanupWorker: Pending + PayOS quá 15 phút giữ chỗ) và là
+/// trạng thái cuối, cùng với Cancelled và Completed. Mọi chuyển trạng thái (kể cả gọi API trực tiếp)
 /// đều phải đi qua bảng này — nhảy trạng thái sai → 400.
 /// </summary>
 public static class OrderStateMachine
@@ -112,10 +116,11 @@ public static class OrderStateMachine
     public static bool CanTransition(OrderStatus from, OrderStatus to)
         => Allowed.TryGetValue(from, out var targets) && targets.Contains(to);
 
-    /// <summary>Khách tự hủy được khi đơn đang Pending (COD) hoặc Paid — giữ nguyên quy tắc cũ (CN-08.3).
-    /// Từ Confirmed trở đi khách chỉ gửi yêu cầu hủy để admin duyệt (chưa có màn duyệt yêu cầu hủy trong đợt này).</summary>
+    /// <summary>Khách tự hủy được từ Pending (COD) / Paid / Confirmed / Preparing (đợt 13, CN-08.3).
+    /// Đơn Pending + PayOS (chưa thanh toán) không hủy tay được — tự Expired sau 15 phút giữ chỗ.
+    /// Từ Shipping trở đi khách không hủy trực tuyến nữa (liên hệ hỗ trợ / trả hàng sau khi nhận).</summary>
     public static bool CustomerCanCancel(Order order)
-        => order.Status == OrderStatus.Paid
+        => order.Status is OrderStatus.Paid or OrderStatus.Confirmed or OrderStatus.Preparing
             || (order.Status == OrderStatus.Pending && order.PaymentMethod == "COD");
 
     /// <summary>Admin được hủy mọi trạng thái trước Shipping (§4).</summary>

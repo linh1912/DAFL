@@ -10,7 +10,7 @@ import {
   Category, Product, ProductDetail, CartItem, Voucher,
   CheckoutResult, ApiResponse, User, NotificationItem, OrderHistory, AppRoute,
   AuthResult, ServerCartDto
-} from './types';
+} from '../../Shared/types';
 import {
   FALLBACK_CATEGORIES, FALLBACK_PRODUCTS, FALLBACK_VOUCHERS, FALLBACK_NOTIFICATIONS
 } from './mockData';
@@ -23,14 +23,15 @@ import { ProductGallery } from './components/product/ProductGallery';
 import { resolveGalleryImages } from './utils/images';
 import { timeAgoVi } from './utils/shops';
 import { CartDrawer } from './components/cart/CartDrawer';
-import { AuthModal, RegisterFormValues, RegisterFieldErrors, PasswordRuleList } from './components/auth/AuthModal';
+import { AuthModal, RegisterFormValues, RegisterFieldErrors, PasswordRuleList } from '../../Shared/components/auth/AuthModal';
 import { CheckoutFormValues } from './components/checkout/CheckoutForm';
 import { PayOSGatewayView } from './components/checkout/PayOSGatewayView';
 import { AddressBook } from './components/profile/AddressBook';
+import { MembershipPage } from './components/membership/MembershipPage';
 import {
   apiFetch, apiJson, getToken, setToken, clearToken,
   setSessionExpiredHandler, newIdempotencyKey, GUEST_CART_STORAGE_KEY,
-} from './utils/api';
+} from '../../Shared/utils/api';
 
 import {
   Routes,
@@ -43,15 +44,8 @@ import {
 } from 'react-router-dom';
 import { MockPayOSStandalonePage } from './components/checkout/MockPayOSStandalonePage';
 import { PaymentSuccessPage } from './components/checkout/PaymentSuccessPage';
-import AdminPage from './components/admin/AdminPage';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-
-/** Chế độ admin-riêng: build với VITE_ADMIN_ONLY=true thì app chỉ render trang
- *  quản trị (không có shop, banner, giỏ hàng...), chạy ở localhost:3001 qua
- *  service `dafl-admin` trong docker-compose.yml. Khi không bật, app chạy
- *  như shop bình thường ở localhost:3000. */
-export const IS_ADMIN_ONLY = import.meta.env.VITE_ADMIN_ONLY === 'true';
 
 /** Phí ship hiện hành của app (O1): 25.000đ, miễn phí khi tạm tính (trước giảm) ≥ 299.000đ. */
 const SHIPPING_FEE = 25000;
@@ -202,11 +196,6 @@ export default function App() {
     pathnameRef.current = location.pathname;
   }, [location.pathname]);
 
-  // Chế độ admin-riêng: đổi title trang (index.html giữ title của shop).
-  useEffect(() => {
-    if (IS_ADMIN_ONLY) document.title = 'DAFL Admin — Quản trị';
-  }, []);
-
   // Navigation & Catalog (CN-04: phân trang server 12/trang + sort + khoảng giá)
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -219,6 +208,15 @@ export default function App() {
   const [priceToText, setPriceToText] = useState('');
   const [priceRange, setPriceRange] = useState<{ from: number | null; to: number | null }>({ from: null, to: null });
   const [priceFilterError, setPriceFilterError] = useState<string | null>(null);
+  // Khoảng giá có sẵn: bấm 1 chạm là lọc luôn (đơn vị đồng).
+  const PRICE_PRESETS: { label: string; from: string; to: string }[] = [
+    { label: 'Dưới 100K', from: '', to: '100000' },
+    { label: '100K – 300K', from: '100000', to: '300000' },
+    { label: '300K – 500K', from: '300000', to: '500000' },
+    { label: '500K – 1 triệu', from: '500000', to: '1000000' },
+    { label: 'Trên 1 triệu', from: '1000000', to: '' },
+  ];
+  const [activePricePreset, setActivePricePreset] = useState<number | null>(null);
   const [catalogPage, setCatalogPage] = useState(1);
   const [catalogHasNext, setCatalogHasNext] = useState(false);
   const [catalogKnownTotal, setCatalogKnownTotal] = useState<number | null>(null);
@@ -502,15 +500,26 @@ export default function App() {
   }, [searchQuery]);
 
   // Nút "Áp dụng" cho khoảng giá: áp dụng ngay cùng phép tính với debounce bên dưới.
-  const applyPriceFilterNow = () => {
-    const from = priceFromText.trim() === '' ? null : Number(priceFromText.replace(/[^\d]/g, ''));
-    const to = priceToText.trim() === '' ? null : Number(priceToText.replace(/[^\d]/g, ''));
+  // Nhận giá trị truyền vào để nút khoảng giá có sẵn áp dụng ngay trong cùng 1 lần bấm
+  // (setState là bất đồng bộ nên không đọc lại state vừa set).
+  const applyPriceFilterNow = (fromText: string = priceFromText, toText: string = priceToText) => {
+    const from = fromText.trim() === '' ? null : Number(fromText.replace(/[^\d]/g, ''));
+    const to = toText.trim() === '' ? null : Number(toText.replace(/[^\d]/g, ''));
     if (from !== null && to !== null && from > to) {
       setPriceFilterError('Giá bắt đầu không được lớn hơn giá đến.');
       return;
     }
     setPriceFilterError(null);
     setPriceRange(prev => (prev.from === from && prev.to === to ? prev : { from, to }));
+  };
+
+  // Bấm 1 khoảng giá có sẵn: điền luôn vào 2 ô Từ/Đến rồi áp dụng ngay.
+  const applyPricePreset = (index: number) => {
+    const preset = PRICE_PRESETS[index];
+    setPriceFromText(preset.from);
+    setPriceToText(preset.to);
+    setActivePricePreset(index);
+    applyPriceFilterNow(preset.from, preset.to);
   };
 
   // Debounce khoảng giá: from > to → lỗi price-filter-error và KHÔNG áp dụng lọc (CN-04.2)
@@ -1303,17 +1312,14 @@ export default function App() {
     clearAuthErrors();
 
     const rawEmail = (values?.email ?? loginEmail).trim().toLowerCase();
-    // Chế độ admin-riêng: nhập "admin" cũng đăng nhập bằng tài khoản admin@dafl.vn
-    // (AuthModal đã chuẩn hóa; đây là lớp đảm bảo nếu email đi qua state App).
-    const normalizedEmail = IS_ADMIN_ONLY && rawEmail === 'admin' ? 'admin@dafl.vn' : rawEmail;
     const password = values?.password ?? loginPassword;
-    if (normalizedEmail !== loginEmail) setLoginEmail(normalizedEmail);
+    if (rawEmail !== loginEmail) setLoginEmail(rawEmail);
 
-    if (!normalizedEmail) {
+    if (!rawEmail) {
       setLoginEmailError('Email không được để trống.');
       return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
       setLoginEmailError('Email không đúng định dạng.');
       return;
     }
@@ -1327,7 +1333,7 @@ export default function App() {
       const { body } = await apiJson<AuthResult>('/api/auth/login', {
         method: 'POST',
         skipAuthHandler: true,
-        body: JSON.stringify({ email: normalizedEmail, password }),
+        body: JSON.stringify({ email: rawEmail, password }),
       });
       if (body?.success && body.data && body.data.token && body.data.user) {
         await completeAuthentication(body.data);
@@ -1579,7 +1585,7 @@ export default function App() {
       setIsNotifOpen(true);
       return;
     }
-    if ((route === 'orders' || route === 'profile') && !user) {
+    if ((route === 'orders' || route === 'profile' || route === 'membership') && !user) {
       sessionStorage.setItem('dafl_return_route', `/${route}`);
       showToast('Yêu cầu đăng nhập', 'Vui lòng đăng nhập để truy cập trang này.', 'System');
       navigate('/login');
@@ -1901,41 +1907,6 @@ export default function App() {
 
   const isStandalone = location.pathname.startsWith('/mock-payos') || location.pathname.startsWith('/payment-success');
 
-  // Chế độ admin-riêng (VITE_ADMIN_ONLY=true): chỉ render trang Admin (+ đăng
-  // nhập để AdminPage chuyển tới khi chưa đăng nhập), ẩn toàn bộ shop: header
-  // shop, banner, giỏ hàng, checkout, footer... Mọi hook/effect phía trên vẫn
-  // chạy như thường (đã gọi hết trước khi return nên không vi phạm rules-of-hooks);
-  // API vẫn dùng chung backend qua nginx proxy /api như bản shop.
-  if (IS_ADMIN_ONLY) {
-    return (
-      <div className="app-container admin-only-app" data-testid="admin-only-app">
-        <Routes>
-          <Route path="/admin" element={<AdminPage />} />
-          <Route
-            path="/login"
-            element={(
-              <AuthModal
-                {...commonAuthProps}
-                isOpen={true}
-                isModal={false}
-                adminOnly
-                onClose={handleAuthClose}
-                authTab="login"
-                setAuthTab={(tab) => {
-                  setAuthTab(tab);
-                  clearAuthErrors();
-                  navigateTo(tab);
-                }}
-              />
-            )}
-          />
-          <Route path="/" element={<Navigate to="/admin" replace />} />
-          <Route path="*" element={<Navigate to="/admin" replace />} />
-        </Routes>
-      </div>
-    );
-  }
-
   return (
     <div className="app-container">
       {/* Live Toast Notification Alert */}
@@ -2100,6 +2071,20 @@ export default function App() {
                   <div className="filter-panel">
                     <div className="filter-group">
                       <h3>Khoảng giá</h3>
+                      <div className="price-presets" data-testid="price-presets">
+                        {PRICE_PRESETS.map((preset, index) => (
+                          <button
+                            key={preset.label}
+                            type="button"
+                            className={`price-preset-btn${activePricePreset === index ? ' active' : ''}`}
+                            onClick={() => applyPricePreset(index)}
+                            data-testid={`price-preset-${index}`}
+                            aria-pressed={activePricePreset === index}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
                       <div className="price-range-inputs">
                         <input
                           className="form-input"
@@ -2107,7 +2092,7 @@ export default function App() {
                           inputMode="numeric"
                           placeholder="Từ (đ)"
                           value={priceFromText}
-                          onChange={e => setPriceFromText(e.target.value)}
+                          onChange={e => { setPriceFromText(e.target.value); setActivePricePreset(null); }}
                           data-testid="price-from-input"
                           aria-label="Giá từ"
                         />
@@ -2118,7 +2103,7 @@ export default function App() {
                           inputMode="numeric"
                           placeholder="Đến (đ)"
                           value={priceToText}
-                          onChange={e => setPriceToText(e.target.value)}
+                          onChange={e => { setPriceToText(e.target.value); setActivePricePreset(null); }}
                           data-testid="price-to-input"
                           aria-label="Giá đến"
                         />
@@ -2131,7 +2116,7 @@ export default function App() {
                       <button
                         type="button"
                         className="btn btn-secondary price-apply-btn"
-                        onClick={applyPriceFilterNow}
+                        onClick={() => applyPriceFilterNow()}
                         data-testid="price-apply-btn"
                       >
                         Áp dụng
@@ -2792,6 +2777,20 @@ export default function App() {
                   </div>
                 )}
               </section>
+            )
+          }
+        />
+
+        {/* ============================================================== */}
+        {/* ROUTE VIEW: MEMBERSHIP (/membership) — đợt 13, mục 2 */}
+        {/* ============================================================== */}
+        <Route
+          path="/membership"
+          element={
+            authInitialized && !user ? (
+              <Navigate to="/login" replace />
+            ) : (
+              <MembershipPage onBack={() => navigateTo('home')} />
             )
           }
         />
@@ -3686,9 +3685,6 @@ export default function App() {
             )
           }
         />
-
-        {/* Trang quản trị (Super Admin) — bảo vệ quyền ở trong AdminPage */}
-        <Route path="/admin" element={<AdminPage />} />
 
         {/* Standalone simulated payment and success pages */}
         <Route path="/mock-payos" element={<MockPayOSStandalonePage />} />

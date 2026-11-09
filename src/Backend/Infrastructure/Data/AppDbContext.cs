@@ -2,13 +2,22 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DAFL.Backend.Infrastructure.Data;
 
+/// <summary>Máy trạng thái đơn hàng (§4, đợt 13):
+/// luồng chính Pending → Paid (PayOS webhook) → Confirmed → Preparing → Shipping → Delivered → Completed.
+/// COD bỏ qua Paid: Pending → Confirmed. Lối tắt cho phép: Paid → Preparing (admin xác nhận + chuẩn bị
+/// trong một bước), Confirmed → Shipping (bỏ qua bước chuẩn bị).
+/// Hủy được từ Pending / Paid / Confirmed / Preparing (khách chỉ hủy Pending-COD + Paid/Confirmed/Preparing;
+/// xem <see cref="DAFL.Backend.Features.Admin.OrderStateMachine"/>).
+/// Expired là trạng thái cuối do hệ thống đặt: đơn Pending + PayOS chưa thanh toán, quá 15 phút giữ chỗ
+/// thì <see cref="DAFL.Backend.Features.Orders.ReservationCleanupWorker"/> chuyển sang Expired.
+/// Cancelled / Expired / Completed là trạng thái cuối — không chuyển đi đâu nữa.</summary>
 public enum OrderStatus
 {
     Pending = 0,    // COD: "Chờ xác nhận" · PayOS: "Chờ thanh toán"
     Paid = 1,       // Đã thanh toán (PayOS) → đang "Chờ xác nhận" xử lý
     Cancelled = 2,  // Đã hủy
-    Expired = 3,    // Hết hạn giữ kho (chỉ PayOS)
-    Preparing = 4,  // Đang chuẩn bị
+    Expired = 3,    // "Hết hạn thanh toán" — hết hạn giữ chỗ 15 phút (chỉ PayOS, do hệ thống đặt)
+    Preparing = 4,  // "Đang chuẩn bị" — sau Confirmed, trước Shipping
     Shipping = 5,   // Đang giao
     Delivered = 6,  // Đã giao
     Confirmed = 7,  // Admin đã xác nhận (sau Paid / Pending-COD) — mới theo tài liệu §4

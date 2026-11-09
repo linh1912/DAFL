@@ -1,0 +1,336 @@
+/* ==========================================================================
+ * CSS cho form đăng nhập dùng chung (AuthModal, src/Shared/components/auth/).
+ * Trích NGUYÊN VĂN các rule auth từ src/Frontend/src/index.css (đợt 8) —
+ * chỉ lấy đúng những class AuthModal dùng ở chế độ trang (isModal=false)
+ * và modal: .btn, .modal-*, .form-*, .auth-*.
+ *
+ * THEME GIỮ NGUYÊN theo brief chốt 2026-11-08: vàng #FFD900 + hồng #D81B60,
+ * Be Vietnam Pro. KHÔNG đổi theo đặc tả UI/UX v2.0 §2 (Primary #9E2A2B Rose
+ * Velvet + Playfair Display) — §2 mâu thuẫn với brief đã triển khai, việc
+ * tách thư mục đợt 13 không restyle.
+ *
+ * LƯU Ý TRÙNG LẶP: src/Frontend/src/index.css vẫn còn giữ nguyên các rule
+ * này (web chưa gỡ ra để tránh vỡ giao diện shop — file 4828 dòng, nhiều
+ * override theo tầng). Đây là bản dùng cho app Admin; khi refactor CSS web
+ * thì gỡ các rule auth khỏi index.css và để cả 2 app cùng import file này.
+ * ========================================================================== */
+
+:root {
+  --font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif;
+  --primary: #d81b60;
+  --primary-hover: #ad1457;
+  --primary-glow: rgba(216, 27, 96, 0.14);
+  --pdd-gradient: #d81b60;
+  --pdd-gradient-hover: #ad1457;
+  --dafl-yellow: #ffd900;
+  --dafl-line: #e8e8e8;
+  --bg-primary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-modal: #ffffff;
+  --bg-input: #ffffff;
+  --bg-subtle-light: #f5f5f5;
+  --border-subtle: #e8e8e8;
+  --border-focus: rgba(216, 27, 96, 0.55);
+  --text-main: #111111;
+  --text-muted: #5f5f5f;
+  --btn-secondary-bg: #f5f5f5;
+  --btn-secondary-hover: #eeeeee;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-family);
+  background: #ffffff;
+  color: var(--text-main);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: var(--pdd-gradient);
+  color: white;
+  box-shadow: 0 4px 14px var(--primary-glow);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--pdd-gradient-hover);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background: var(--btn-secondary-bg);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--btn-secondary-hover);
+}
+
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.2s ease;
+}
+
+.modal-content {
+  background: var(--bg-modal);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  max-width: 660px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  padding: 32px;
+  position: relative;
+  color: var(--text-main);
+}
+
+.modal-content-lg {
+  max-width: 900px;
+  width: 95%;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.modal-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  transition: color 0.2s ease;
+}
+
+.close-btn:hover {
+  color: var(--text-main);
+}
+
+/* Tabs */
+.modal-tabs {
+  display: flex;
+  gap: 8px;
+  background: var(--bg-subtle-light);
+  padding: 4px;
+  border-radius: var(--radius-md);
+  margin-bottom: 20px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-btn.active {
+  background: var(--pdd-gradient);
+  color: white;
+  box-shadow: 0 2px 8px var(--primary-glow);
+}
+
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+/* Cart Items */
+.cart-item {
+  display: flex;
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.auth-page-wrapper {
+  max-width: 540px;
+  margin: 40px auto 80px;
+  padding: 0 16px;
+  animation: fadeIn 0.25s ease;
+}
+
+.auth-page-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 32px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.08);
+}
+
+.auth-card-header {
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+}
+
+/* Trang đăng nhập (isModal=false): khung form căn giữa cả 2 chiều, cao tối
+ * thiểu toàn màn hình — áp dụng cho cả shop /login và admin /login (đợt 13
+ * mục 8). Trước đây rule này thiếu dấu } ở .auth-card-header nên bị trình
+ * duyệt bỏ qua, khung chỉ có margin 40px auto 80px (dính lên trên). */
+.auth-page-wrapper {
+  max-width: 1140px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 24px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-page-wrapper > .auth-page-card {
+  width: 100%;
+}
+
+.auth-page-card {
+  display: grid;
+  grid-template-columns: 0.8fr 1.25fr;
+  padding: 0;
+  overflow: hidden;
+}
+
+.auth-side-panel {
+  background: var(--dafl-yellow);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 20px;
+}
+
+.auth-side-logo {
+  width: 92px;
+  height: 92px;
+  border: 3px solid #111111;
+  border-radius: 50%;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.4rem;
+  font-weight: 900;
+  color: #111111;
+}
+
+.auth-side-name {
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: 0.28em;
+  padding-left: 0.28em;
+  color: #111111;
+}
+
+.auth-main-panel {
+  padding: 40px;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .auth-page-card {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-side-panel {
+    padding: 22px 16px;
+  }
+
+  .auth-side-logo {
+    width: 64px;
+    height: 64px;
+    font-size: 1.7rem;
+  }
+
+  .auth-side-name {
+    font-size: 1.35rem;
+  }
+
+  .auth-main-panel {
+    padding: 24px 20px;
+  }
+}
+
+/* Detail, cart and checkout surfaces */
+.product-detail-page,
+
+/* Bo góc tầng chuẩn hóa đợt 8 (index.css cuối file). */
+.modal-content { border-radius: 20px; }
+.product-card, .order-card, .profile-card, .payment-page-card, .notifications-page-card, .product-detail-page-card, .cart-page-content, .auth-page-card { border-radius: 16px; }
+.btn { border-radius: 12px; }
+.form-input, select.form-input, .sort-select, .orders-filter-select { border-radius: 12px; }

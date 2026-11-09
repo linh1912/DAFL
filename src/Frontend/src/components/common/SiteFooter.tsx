@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CheckCircle2, CreditCard, Mail, MapPin, Phone } from 'lucide-react';
-import { apiJson } from '../../utils/api';
+import { apiJson } from '../../../../Shared/utils/api';
 
 export const SiteFooter: React.FC = () => {
   const [newsletterEmail, setNewsletterEmail] = useState('');
@@ -81,33 +82,34 @@ export const SiteFooter: React.FC = () => {
         <nav aria-label="Mua sắm tại DAFL">
           <h3>Mua sắm</h3>
           <ul>
-            <li>Chăm sóc da</li>
-            <li>Trang điểm</li>
-            <li>Chăm sóc tóc</li>
-            <li>Cơ thể &amp; nước hoa</li>
-            <li>Flash Sale</li>
+            {/* Danh mục mỹ phẩm chưa có route riêng — về trang chủ (danh mục + Flash Sale đều ở đó). */}
+            <li><Link to="/" data-testid="footer-link-category-skincare">Chăm sóc da</Link></li>
+            <li><Link to="/" data-testid="footer-link-category-makeup">Trang điểm</Link></li>
+            <li><Link to="/" data-testid="footer-link-category-hair">Chăm sóc tóc</Link></li>
+            <li><Link to="/" data-testid="footer-link-category-body">Cơ thể &amp; nước hoa</Link></li>
+            <li><Link to="/" data-testid="footer-link-flash-sale">Flash Sale</Link></li>
           </ul>
         </nav>
 
         <nav aria-label="Hỗ trợ khách hàng DAFL">
           <h3>Hỗ trợ khách hàng</h3>
           <ul>
-            <li>Hướng dẫn mua hàng</li>
-            <li>Chính sách vận chuyển</li>
-            <li>Đổi trả trong 30 ngày</li>
-            <li>Tra cứu đơn hàng</li>
-            <li>Câu hỏi thường gặp</li>
+            <li><Link to="/" data-testid="footer-link-guide">Hướng dẫn mua hàng</Link></li>
+            <li><Link to="/cart" data-testid="footer-link-shipping">Chính sách vận chuyển</Link></li>
+            <li><Link to="/orders" data-testid="footer-link-returns">Đổi trả trong 30 ngày</Link></li>
+            <li><Link to="/orders" data-testid="footer-link-track-order">Tra cứu đơn hàng</Link></li>
+            <li><Link to="/" data-testid="footer-link-faq">Câu hỏi thường gặp</Link></li>
           </ul>
         </nav>
 
         <nav aria-label="Về DAFL">
           <h3>Về DAFL</h3>
           <ul>
-            <li>Giới thiệu</li>
-            <li>Gian hàng</li>
-            <li>Tạp chí làm đẹp</li>
-            <li>DAFL Member</li>
-            <li>Liên hệ</li>
+            <li><Link to="/" data-testid="footer-link-about">Giới thiệu</Link></li>
+            <li><Link to="/" data-testid="footer-link-shops">Gian hàng</Link></li>
+            <li><Link to="/" data-testid="footer-link-magazine">Tạp chí làm đẹp</Link></li>
+            <li><Link to="/membership" data-testid="footer-link-member">DAFL Member</Link></li>
+            <li><Link to="/" data-testid="footer-link-contact">Liên hệ</Link></li>
           </ul>
         </nav>
       </footer>

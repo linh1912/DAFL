@@ -1,4 +1,4 @@
-import { Category, Product, Voucher, NotificationItem } from './types';
+import { Category, Product, Voucher, NotificationItem } from '../../Shared/types';
 
 export const FALLBACK_CATEGORIES: Category[] = [
   {

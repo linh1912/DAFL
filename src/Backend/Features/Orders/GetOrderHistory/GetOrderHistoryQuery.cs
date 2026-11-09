@@ -23,7 +23,7 @@ public static class OrderStatusLabels
         OrderStatus.Completed => "Hoàn tất",
         OrderStatus.ReturnRequested => "Yêu cầu trả hàng",
         OrderStatus.Cancelled => "Đã hủy",
-        OrderStatus.Expired => "Đã hết hạn",
+        OrderStatus.Expired => "Hết hạn thanh toán",
         _ => status.ToString()
     };
 }

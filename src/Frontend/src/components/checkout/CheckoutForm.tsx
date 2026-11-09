@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ShippingInfo, User, UserAddress } from '../../types';
+import { ShippingInfo, User, UserAddress } from '../../../../Shared/types';
 import { formatPrice } from '../../utils/formatters';
-import { apiJson } from '../../utils/api';
+import { apiJson } from '../../../../Shared/utils/api';
 import {
   VIETNAM_PROVINCES,
   PROVINCES_AVAILABLE,

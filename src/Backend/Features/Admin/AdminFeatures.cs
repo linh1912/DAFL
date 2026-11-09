@@ -329,7 +329,7 @@ public class DeleteCategoryCommandHandler : IRequestHandler<DeleteCategoryComman
 
 public record AdminCustomerDto(Guid Id, string Email, string FullName, string? PhoneNumber,
     string Role, bool IsLocked, string MembershipTier, decimal TotalSpent12m, int OrderCount,
-    DateTime CreatedAt, DateTime? LastLoginAt);
+    DateTime CreatedAt, DateTime? LastLoginAt, int AvailablePoints);
 
 public record ListCustomersQuery(string? Search, string? Tier, int Page = 1, int PageSize = 20)
     : IRequest<ApiResponse<List<AdminCustomerDto>>>;
@@ -358,9 +358,19 @@ public class ListCustomersQueryHandler : IRequestHandler<ListCustomersQuery, Api
         var counts = await _db.Orders.Where(o => o.UserId.HasValue && ids.Contains(o.UserId.Value))
             .GroupBy(o => o.UserId!.Value).Select(g => new { UserId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.UserId, x => x.Count, ct);
+        // Số dư điểm khả dụng (đợt 13): tổng RemainingPoints của các lô dương chưa hết hạn
+        // — cùng định nghĩa với MembershipService.AvailablePointsAsync, tính gộp 1 query cho cả trang.
+        var now = DateTime.UtcNow;
+        var points = await _db.PointTransactions
+            .Where(p => ids.Contains(p.UserId) && p.RemainingPoints.HasValue && p.RemainingPoints.Value > 0
+                && (p.ExpiresAt == null || p.ExpiresAt.Value > now))
+            .GroupBy(p => p.UserId)
+            .Select(g => new { UserId = g.Key, Points = g.Sum(p => p.RemainingPoints ?? 0) })
+            .ToDictionaryAsync(x => x.UserId, x => x.Points, ct);
         return ApiResponse<List<AdminCustomerDto>>.Ok(users.Select(u => new AdminCustomerDto(
             u.Id, u.Email, u.FullName, u.PhoneNumber, u.Role, u.IsLocked, u.MembershipTier,
-            u.TotalSpent12m, counts.GetValueOrDefault(u.Id), u.CreatedAt, u.LastLoginAt)).ToList());
+            u.TotalSpent12m, counts.GetValueOrDefault(u.Id), u.CreatedAt, u.LastLoginAt,
+            points.GetValueOrDefault(u.Id))).ToList());
     }
 }
 
